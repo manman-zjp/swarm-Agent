@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.env
+
+# Poetry
+poetry.lock
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+
+# Swarm runtime data (logs + snapshots, NOT config templates)
+swarm/logs/
+swarm/data/board_snapshot.json
+swarm/data/skills.json
+swarm/data/patterns.json
+swarm/data/lessons.json
+
