@@ -121,8 +121,8 @@ Swarm Agent is a **self-organizing multi-agent system** built on the blackboard 
 ### Installation
 
 ```bash
-git clone https://github.com/AuroraAI-bat/swarm-agent.git
-cd swarm-agent
+git clone https://github.com/manman-zjp/swarm-Agent.git
+cd swarm-Agent
 
 poetry install            # Core dependencies
 poetry install -E mcp     # + MCP support (recommended)
