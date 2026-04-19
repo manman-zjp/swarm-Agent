@@ -69,6 +69,7 @@ async def lifespan(app: FastAPI):
 
     # 2. 启动技能热插拔监控
     if config.skill_hotloader.enabled:
+        # Python 技能监控
         skill_hotloader = SkillHotLoader(
             registry=skill_registry,
             watch_dir=config.skill_hotloader.watch_dir,
@@ -77,6 +78,20 @@ async def lifespan(app: FastAPI):
         hotloaded = skill_hotloader.start()
         if hotloaded:
             logger.info(f"[热插拔] 自动加载 {hotloaded} 个技能")
+
+        # Markdown 技能监控（如果配置了独立目录）
+        md_watch_dir = config.skill_hotloader.md_watch_dir
+        if md_watch_dir and md_watch_dir != config.skill_hotloader.watch_dir:
+            md_hotloader = SkillHotLoader(
+                registry=skill_registry,
+                watch_dir=md_watch_dir,
+                auto_scan=True,
+            )
+            md_loaded = md_hotloader.start()
+            if md_loaded:
+                logger.info(f"[热插拔-MD] 自动加载 {md_loaded} 个 Markdown 技能")
+            # 保存引用以便关闭时清理
+            app.state.md_hotloader = md_hotloader
 
     # 3. 加载 MCP 服务器
     mcp_count = await mcp_manager.load_servers()
@@ -114,6 +129,10 @@ async def lifespan(app: FastAPI):
         task.cancel()
     if skill_hotloader:
         skill_hotloader.stop()
+    # 关闭 Markdown 热插拔监控
+    md_hotloader = getattr(app.state, 'md_hotloader', None)
+    if md_hotloader:
+        md_hotloader.stop()
     await mcp_manager.close()
     await observer.stop()
     logger.info("蜂群已关闭")

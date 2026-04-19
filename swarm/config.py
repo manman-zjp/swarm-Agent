@@ -113,9 +113,13 @@ class SkillHotLoaderConfig:
     """技能热插拔配置。"""
     # 是否启用技能热插拔
     enabled: bool = field(default_factory=lambda: _env_str("SKILL_HOTLOADER_ENABLED", "true").lower() == "true")
-    # 监控的技能目录路径（相对于项目根目录）
+    # 监控的技能目录路径（相对于项目根目录，支持 .py 和 .md 文件）
     watch_dir: str = field(default_factory=lambda: _env_str(
         "SKILL_HOTLOADER_WATCH_DIR", "swarm/skills/builtin",
+    ))
+    # Markdown 技能目录（可选，如果不指定则使用 watch_dir）
+    md_watch_dir: str = field(default_factory=lambda: _env_str(
+        "SKILL_MD_WATCH_DIR", "",  # 空则使用 watch_dir
     ))
 
 
