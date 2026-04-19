@@ -117,6 +117,12 @@ Swarm Agent is a **self-organizing multi-agent system** built on the blackboard 
 - JSONL logs for every agent decision
 - REST API for real-time inspection
 
+**Hot-Pluggable Skills**
+- File system monitoring via `watchdog` — skills auto-discovered on file change
+- Drop a new `.py` file into `swarm/skills/builtin/` → instantly available to agents
+- `importlib.reload()` for live updates without restart
+- HTTP management API: `/skills/load`, `/skills/reload/{name}`, `DELETE /skills/{name}`
+
 <br>
 
 ## Quick Start
@@ -138,6 +144,7 @@ cd swarm-Agent
 
 poetry install            # Core dependencies (includes SQLAlchemy)
 poetry install -E mcp     # + MCP support (recommended)
+poetry install -E hotloader  # + Skill hot-plugging (watchdog)
 
 # Optional database backends (default SQLite needs no extra deps)
 poetry install -E mysql   # + MySQL support (pymysql)
@@ -242,6 +249,9 @@ See [MCP Servers Registry](https://github.com/modelcontextprotocol/servers) for 
 | `POST` | `/chat` | Send a message to the swarm |
 | `GET` | `/health` | Health check (agent count, skills, pending tasks) |
 | `GET` | `/skills` | List all registered skills and tools |
+| `POST` | `/skills/load` | Manually load a skill module |
+| `POST` | `/skills/reload/{name}` | Hot-reload a specific skill |
+| `DELETE` | `/skills/{name}` | Unregister a skill |
 
 </details>
 
@@ -283,9 +293,21 @@ See [MCP Servers Registry](https://github.com/modelcontextprotocol/servers) for 
 
 </details>
 
+<details>
+<summary><b>Skill Hot-Plugging</b></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `SKILL_HOTLOADER_ENABLED` | `true` | Enable/disable skill hot-plugging |
+| `SKILL_HOTLOADER_WATCH_DIR` | `swarm/skills/builtin` | Directory to monitor for new skills |
+
+</details>
+
 <br>
 
 ## Extending Skills
+
+### Static Registration
 
 Create a custom skill by subclassing `BaseSkill`:
 
@@ -327,6 +349,64 @@ Register in `main.py`:
 skill_registry.register(WeatherSkill())
 ```
 
+### Hot-Plugging (Zero Restart)
+
+With `watchdog` installed (`poetry install -E hotloader`), simply drop a new `.py` file into the watched directory:
+
+```bash
+# 1. Create a new skill file
+cat > swarm/skills/builtin/weather.py << 'EOF'
+from swarm.skills.base import BaseSkill
+from typing import Any
+
+class WeatherSkill(BaseSkill):
+    @property
+    def name(self) -> str:
+        return "weather"
+
+    @property
+    def description(self) -> str:
+        return "Query real-time weather information"
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [{
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get current weather for a city",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "city": {"type": "string", "description": "City name"}
+                    },
+                    "required": ["city"],
+                },
+            },
+        }]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> str:
+        return f"Weather in {args['city']}: 25 C, Sunny"
+EOF
+
+# 2. The system automatically detects and registers it!
+# No restart required — agents can use it immediately.
+```
+
+**HTTP API for manual management:**
+
+```bash
+# Load a skill module by path
+curl -X POST http://localhost:8000/skills/load \
+  -H "Content-Type: application/json" \
+  -d '{"module": "swarm.skills.builtin.weather"}'
+
+# Hot-reload an existing skill
+curl -X POST http://localhost:8000/skills/reload/weather
+
+# Unregister a skill
+curl -X DELETE http://localhost:8000/skills/weather
+```
+
 <br>
 
 ## Collective Knowledge
@@ -361,9 +441,11 @@ swarm-agent/
 │   ├── skills/
 │   │   ├── base.py              # Skill abstract base class
 │   │   ├── registry.py          # Skill registry + tool routing
+│   │   ├── hotloader.py         # Hot-plug manager (watchdog + importlib)
 │   │   └── builtin/
 │   │       ├── code_exec.py     # Built-in: Python/Shell execution
 │   │       └── task_ops.py      # Built-in: Task decomposition
+│   │       └── weather.py       # Example: Custom hot-pluggable skill
 │   ├── mcp/
 │   │   └── client.py            # MCP client: external server connector
 │   ├── static/
@@ -373,7 +455,8 @@ swarm-agent/
 ├── tests/                       # Unit tests (pytest)
 │   ├── test_config.py
 │   ├── test_models.py
-│   └── test_storage.py
+│   ├── test_storage.py
+│   └── test_hotloader.py
 ├── docs/
 │   └── architecture.md          # Architecture design document
 ├── .env.example                 # Environment template (all parameters)
@@ -464,6 +547,7 @@ All parameters are centralized in `swarm/config.py` and driven by environment va
 | Persistence | SQLAlchemy 2.0 (SQLite / MySQL / PostgreSQL) |
 | Connection Pool | SQLAlchemy QueuePool (pool_pre_ping + auto-recycle) |
 | Frontend | Built-in SPA (vanilla JS, no build step) |
+| Hot-Plugging | watchdog (file system monitoring + importlib reload) |
 
 <br>
 
@@ -473,6 +557,7 @@ All parameters are centralized in `swarm/config.py` and driven by environment va
 - [x] ~~Multi-backend persistence~~ — SQLite / MySQL / PostgreSQL via SQLAlchemy
 - [x] ~~Three-layer memory~~ — KV facts + rolling summary + context window
 - [x] ~~Connection pooling~~ — SQLAlchemy QueuePool with pre-ping & auto-recycle
+- [x] ~~Hot-pluggable skills~~ — File monitoring + zero-restart skill registration
 - [x] ~~Automatic skill extraction & evolution~~ — Collective knowledge system
 - [ ] Redis backend for production-grade blackboard
 - [ ] Dynamic agent scaling

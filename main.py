@@ -28,6 +28,7 @@ from swarm.llm import LLMClient
 from swarm.agent import SwarmAgent
 from swarm.skills.registry import SkillRegistry
 from swarm.skills.builtin import CodeExecutionSkill, TaskDecomposeSkill
+from swarm.skills.hotloader import SkillHotLoader
 from swarm.mcp.client import MCPManager
 from swarm.config import config
 
@@ -50,6 +51,7 @@ blackboard = Blackboard(store=session_store)
 llm = LLMClient()
 skill_registry = SkillRegistry()
 mcp_manager = MCPManager(skill_registry)
+skill_hotloader: SkillHotLoader | None = None
 agents: list[SwarmAgent] = []
 agent_tasks: list[asyncio.Task] = []
 
@@ -57,18 +59,31 @@ agent_tasks: list[asyncio.Task] = []
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
+    global skill_hotloader
+
     # ── 启动 ──
     # 1. 注册内置技能
     skill_registry.register(CodeExecutionSkill())
     skill_registry.register(TaskDecomposeSkill())
     logger.info(f"内置技能注册完成: {skill_registry.skill_count} 个技能, {skill_registry.tool_count} 个工具")
 
-    # 2. 加载 MCP 服务器
+    # 2. 启动技能热插拔监控
+    if config.skill_hotloader.enabled:
+        skill_hotloader = SkillHotLoader(
+            registry=skill_registry,
+            watch_dir=config.skill_hotloader.watch_dir,
+            auto_scan=True,
+        )
+        hotloaded = skill_hotloader.start()
+        if hotloaded:
+            logger.info(f"[热插拔] 自动加载 {hotloaded} 个技能")
+
+    # 3. 加载 MCP 服务器
     mcp_count = await mcp_manager.load_servers()
     if mcp_count:
         logger.info(f"MCP 服务器加载完成: {mcp_count} 个")
 
-    # 3. 启动 Agent 池
+    # 4. 启动 Agent 池
     logger.info(f"启动蜂群：{config.agent.count} 个 Agent")
     for i in range(config.agent.count):
         agent = SwarmAgent(
@@ -81,7 +96,7 @@ async def lifespan(app: FastAPI):
         task = asyncio.create_task(agent.run_forever())
         agent_tasks.append(task)
 
-    # 4. 启动观测器后台刷盘
+    # 5. 启动观测器后台刷盘
     observer.start()
 
     logger.info(
@@ -97,6 +112,8 @@ async def lifespan(app: FastAPI):
         agent.stop()
     for task in agent_tasks:
         task.cancel()
+    if skill_hotloader:
+        skill_hotloader.stop()
     await mcp_manager.close()
     await observer.stop()
     logger.info("蜂群已关闭")
@@ -307,6 +324,47 @@ async def list_skills() -> dict:
         "tools_count": skill_registry.tool_count,
         "skills": skill_registry.list_skills(),
     }
+
+
+# ── 技能热插拔管理 API ────────────────────────────
+
+class SkillLoadRequest(BaseModel):
+    module: str  # 模块路径，如 "swarm.skills.builtin.my_skill"
+
+
+@app.post("/skills/load")
+async def load_skill(req: SkillLoadRequest) -> dict:
+    """手动加载指定模块中的技能。"""
+    if not skill_hotloader:
+        return {"error": "技能热插拔未启用"}
+    skill_name = skill_hotloader.load_module(req.module)
+    if skill_name:
+        return {
+            "status": "ok",
+            "skill_name": skill_name,
+            "total_skills": skill_registry.skill_count,
+        }
+    return {"error": f"加载模块 {req.module} 失败"}
+
+
+@app.post("/skills/reload/{skill_name}")
+async def reload_skill(skill_name: str) -> dict:
+    """热重载指定技能（从源文件重新加载）。"""
+    if not skill_hotloader:
+        return {"error": "技能热插拔未启用"}
+    success = skill_hotloader.reload_skill(skill_name)
+    if success:
+        return {"status": "ok", "skill_name": skill_name}
+    return {"error": f"重载技能 {skill_name} 失败"}
+
+
+@app.delete("/skills/{skill_name}")
+async def delete_skill(skill_name: str) -> dict:
+    """注销指定技能。"""
+    if skill_name in skill_registry._skills:
+        skill_registry.unregister(skill_name)
+        return {"status": "ok", "skill_name": skill_name}
+    return {"error": f"技能 {skill_name} 不存在"}
 
 
 if __name__ == "__main__":

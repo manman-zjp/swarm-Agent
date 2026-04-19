@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>蜂群 Agent 控制台</title>
+<!-- Markdown 渲染库 -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
 :root {
   --bg: #0f1117; --bg2: #1a1d27; --bg3: #242736;
@@ -63,10 +65,46 @@ body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background:va
 .session-item .meta { font-size:11px; color:var(--text2); margin-top:2px; }
 .chat-main { flex:1; display:flex; flex-direction:column; }
 .chat-messages { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
-.msg { max-width:75%; padding:12px 16px; border-radius:12px; line-height:1.6; word-break:break-word; white-space:pre-wrap; font-size:13px; }
+.msg { max-width:75%; padding:12px 16px; border-radius:12px; line-height:1.6; word-break:break-word; font-size:13px; }
 .msg.user { background:var(--chat-user); align-self:flex-end; border-bottom-right-radius:4px; }
 .msg.bot { background:var(--chat-bot); align-self:flex-start; border-bottom-left-radius:4px; }
 .msg .msg-meta { font-size:10px; color:var(--text2); margin-top:6px; }
+
+/* ── Markdown 样式 ── */
+.msg.md-content h1, .msg.md-content h2, .msg.md-content h3, .msg.md-content h4 {
+  margin:12px 0 8px; font-weight:600; line-height:1.4;
+}
+.msg.md-content h1 { font-size:18px; }
+.msg.md-content h2 { font-size:16px; }
+.msg.md-content h3 { font-size:14px; }
+.msg.md-content h4 { font-size:13px; }
+.msg.md-content p { margin:8px 0; }
+.msg.md-content ul, .msg.md-content ol { margin:8px 0; padding-left:20px; }
+.msg.md-content li { margin:4px 0; }
+.msg.md-content code {
+  background:rgba(99,102,241,0.15); padding:2px 6px; border-radius:4px;
+  font-family:'SF Mono', Monaco, 'Cascadia Code', monospace; font-size:12px;
+}
+.msg.md-content pre {
+  background:var(--bg); padding:12px; border-radius:6px; overflow-x:auto;
+  margin:8px 0; border:1px solid var(--border);
+}
+.msg.md-content pre code {
+  background:none; padding:0; font-size:12px; line-height:1.5;
+}
+.msg.md-content blockquote {
+  border-left:3px solid var(--primary); padding-left:12px;
+  margin:8px 0; color:var(--text2); font-style:italic;
+}
+.msg.md-content table {
+  border-collapse:collapse; width:100%; margin:8px 0;
+}
+.msg.md-content th, .msg.md-content td {
+  border:1px solid var(--border); padding:6px 10px; text-align:left;
+}
+.msg.md-content th { background:var(--bg3); font-weight:600; }
+.msg.md-content a { color:var(--primary-hover); text-decoration:underline; }
+.msg.md-content hr { border:none; border-top:1px solid var(--border); margin:12px 0; }
 .chat-input-area { padding:16px 20px; border-top:1px solid var(--border); background:var(--bg2); display:flex; gap:10px; }
 .chat-input-area textarea { flex:1; background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius); padding:10px 14px; color:var(--text); font-size:13px; resize:none; height:44px; font-family:inherit; outline:none; }
 .chat-input-area textarea:focus { border-color:var(--primary); }
@@ -160,6 +198,10 @@ tr:hover td { background:rgba(99,102,241,0.05); }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
       技能
     </div>
+    <div class="nav-item" data-page="hotloader">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+      热插拔
+    </div>
   </nav>
   <div class="sidebar-footer">
     <span class="status-dot" id="health-dot"></span>
@@ -248,6 +290,12 @@ tr:hover td { background:rgba(99,102,241,0.05); }
     <div style="flex:1;overflow-y:auto;padding:20px;" id="skills-content"></div>
   </div>
 
+  <!-- ── 技能热插拔页 ── -->
+  <div class="page" id="page-hotloader">
+    <div class="topbar"><h2>技能热插拔管理</h2><div class="actions"><button class="btn btn-sm" onclick="refreshHotloader()">刷新</button></div></div>
+    <div style="flex:1;overflow-y:auto;padding:20px;" id="hotloader-content"></div>
+  </div>
+
 </div>
 
 <!-- ── 弹窗（记忆详情） ── -->
@@ -281,6 +329,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     else if (page === 'sessions') refreshSessions();
     else if (page === 'knowledge') refreshKnowledge();
     else if (page === 'skills') refreshSkills();
+    else if (page === 'hotloader') refreshHotloader();
   });
 });
 
@@ -301,6 +350,24 @@ setInterval(checkHealth, 15000);
 
 // ── 工具函数 ──
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// Markdown 渲染（带安全过滤）
+function renderMarkdown(text) {
+  if (!text) return '';
+  // 配置 marked
+  marked.setOptions({
+    breaks: true,      // 支持 GFM 换行
+    gfm: true,         // 启用 GitHub Flavored Markdown
+    headerIds: false,  // 不生成 header id
+    mangle: false,     // 不转义 email
+  });
+  try {
+    return marked.parse(text);
+  } catch (e) {
+    console.error('Markdown 渲染失败:', e);
+    return esc(text);
+  }
+}
 function statusBadge(s) {
   const cls = { done:'status-done', running:'status-running', pending:'status-pending', failed:'status-failed', decomposed:'status-pending' };
   const label = { done:'完成', running:'运行中', pending:'等待', failed:'失败', decomposed:'已拆分', pending_review:'待审', rejected:'驳回' };
@@ -355,12 +422,14 @@ function renderChat() {
   titleEl.textContent = `会话 ${currentSession}`;
   const msgs = sessions[currentSession].messages;
   if (!msgs.length) { msgEl.innerHTML = '<div class="empty">开始一段新对话...</div>'; return; }
-  msgEl.innerHTML = msgs.map(m =>
-    `<div class="msg ${m.role}">
-      ${esc(m.content)}
+  msgEl.innerHTML = msgs.map(m => {
+    const content = m.role === 'bot' ? renderMarkdown(m.content) : esc(m.content);
+    const mdClass = m.role === 'bot' ? 'md-content' : '';
+    return `<div class="msg ${m.role} ${mdClass}">
+      ${content}
       ${m.taskId ? `<div class="msg-meta">task: ${m.taskId}</div>` : ''}
-    </div>`
-  ).join('');
+    </div>`;
+  }).join('');
   msgEl.scrollTop = msgEl.scrollHeight;
 }
 
@@ -480,6 +549,12 @@ async function refreshDashboard() {
   }
 }
 
+// 渲染任务输出（支持 Markdown）
+function renderTaskOutput(text) {
+  if (!text) return '';
+  return `<pre style="background:var(--bg3);padding:12px;border-radius:6px;white-space:pre-wrap;font-size:12px;max-height:300px;overflow-y:auto;">${renderMarkdown(text)}</pre>`;
+}
+
 // ══════════════════════════════════════════════
 // ── 任务页 ──
 // ══════════════════════════════════════════════
@@ -525,7 +600,7 @@ async function viewTaskDetail(taskId) {
     html += `<p><b>ID:</b> ${d.task.task_id}</p>`;
     html += `<p><b>状态:</b> ${statusBadge(d.task.status)}</p>`;
     html += `<p><b>任务:</b> ${esc(d.task.action)}</p>`;
-    if (d.task.output_text) html += `<p><b>输出:</b></p><pre style="background:var(--bg3);padding:12px;border-radius:6px;white-space:pre-wrap;font-size:12px;max-height:300px;overflow-y:auto;">${esc(d.task.output_text)}</pre>`;
+    if (d.task.output_text) html += `<p style="margin-top:12px;"><b>输出:</b></p>${renderTaskOutput(d.task.output_text)}`;
     if (d.children.length) {
       html += `<p style="margin-top:12px;"><b>子任务 (${d.children.length}):</b></p>`;
       html += d.children.map(c => `<div style="padding:6px 0;border-bottom:1px solid var(--border);">${statusBadge(c.status)} <code>${c.task_id}</code> ${esc((c.action||'').slice(0,60))}</div>`).join('');
@@ -668,6 +743,128 @@ async function refreshSkills() {
     document.getElementById('skills-content').innerHTML = html;
   } catch (e) {
     document.getElementById('skills-content').innerHTML = '<div class="empty">加载失败</div>';
+  }
+}
+
+// ══════════════════════════════════════════════
+// ── 技能热插拔页 ──
+// ══════════════════════════════════════════════
+
+async function refreshHotloader() {
+  try {
+    // 获取已注册技能
+    const r = await fetch(API + '/skills');
+    const d = await r.json();
+    
+    let html = `
+    <!-- 统计卡片 -->
+    <div class="stat-grid" style="margin-bottom:20px;">
+      <div class="stat-card highlight"><div class="label">已加载技能</div><div class="value">${d.count}</div></div>
+      <div class="stat-card highlight"><div class="label">工具总数</div><div class="value">${d.tools_count}</div></div>
+      <div class="stat-card"><div class="label">监控目录</div><div class="value" style="font-size:14px">swarm/skills/builtin</div></div>
+    </div>
+    
+    <!-- 操作区 -->
+    <div class="table-wrap" style="margin-bottom:20px;">
+      <div class="panel-header" style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;">热插拔操作</div>
+      <div style="padding:16px;">
+        <div style="display:flex;gap:12px;margin-bottom:12px;">
+          <input id="hotload-module" placeholder="模块路径 (例: swarm.skills.builtin.weather)" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--text);font-size:13px;outline:none;">
+          <button class="btn btn-primary" onclick="hotloadSkill()">加载模块</button>
+        </div>
+        <div style="display:flex;gap:12px;">
+          <input id="reload-skill-name" placeholder="技能名称 (例: weather_skill)" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--text);font-size:13px;outline:none;">
+          <button class="btn" onclick="reloadSkill()">热重载</button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 技能列表 -->
+    <div class="table-wrap">
+      <div class="panel-header" style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;">已注册技能 (${d.count})</div>
+      <table>
+        <thead><tr><th>技能名称</th><th>工具列表</th><th>操作</th></tr></thead>
+        <tbody>`;
+    
+    if ((d.skills||[]).length) {
+      html += d.skills.map(s => 
+        `<tr>
+          <td><strong>${esc(s.name)}</strong></td>
+          <td style="font-size:12px;color:var(--text2);">${(s.tools||[]).map(t => esc(t)).join(', ') || '-'}</td>
+          <td>
+            <button class="btn btn-sm" onclick="reloadSkillByName('${esc(s.name)}')">重载</button>
+            <button class="btn btn-sm btn-danger" onclick="unloadSkill('${esc(s.name)}')">卸载</button>
+          </td>
+        </tr>`
+      ).join('');
+    } else {
+      html += '<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text2);">暂无技能</td></tr>';
+    }
+    
+    html += `</tbody></table></div>`;
+    document.getElementById('hotloader-content').innerHTML = html;
+  } catch (e) {
+    document.getElementById('hotloader-content').innerHTML = '<div class="empty">加载失败</div>';
+  }
+}
+
+async function hotloadSkill() {
+  const module = document.getElementById('hotload-module').value.trim();
+  if (!module) { alert('请输入模块路径'); return; }
+  
+  try {
+    const r = await fetch(API + '/skills/load', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ module })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      alert(`成功加载技能: ${d.skill_name}`);
+      refreshHotloader();
+    } else {
+      alert(`加载失败: ${d.error}`);
+    }
+  } catch (e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+
+async function reloadSkill() {
+  const name = document.getElementById('reload-skill-name').value.trim();
+  if (!name) { alert('请输入技能名称'); return; }
+  await reloadSkillByName(name);
+}
+
+async function reloadSkillByName(name) {
+  try {
+    const r = await fetch(API + `/skills/reload/${encodeURIComponent(name)}`, { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      alert(`成功重载技能: ${name}`);
+      refreshHotloader();
+    } else {
+      alert(`重载失败: ${d.error}`);
+    }
+  } catch (e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+
+async function unloadSkill(name) {
+  if (!confirm(`确定要卸载技能 "${name}" 吗？`)) return;
+  
+  try {
+    const r = await fetch(API + `/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (d.ok) {
+      alert(`成功卸载技能: ${name}`);
+      refreshHotloader();
+    } else {
+      alert(`卸载失败: ${d.error}`);
+    }
+  } catch (e) {
+    alert('请求失败: ' + e.message);
   }
 }
 

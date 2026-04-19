@@ -34,6 +34,7 @@ mcp = ["mcp (>=1.0.0)"]
 mysql = ["pymysql (>=1.1.0)"]
 pgsql = ["psycopg2-binary (>=2.9.0)"]
 all-db = ["pymysql (>=1.1.0)", "psycopg2-binary (>=2.9.0)"]
+hotloader = ["watchdog (>=3.0.0)"]
 dev = [
     "pytest (>=8.0)",
     "pytest-asyncio (>=0.23)",

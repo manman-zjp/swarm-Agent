@@ -109,6 +109,17 @@ class CodeExecConfig:
 
 
 @dataclass(frozen=True)
+class SkillHotLoaderConfig:
+    """技能热插拔配置。"""
+    # 是否启用技能热插拔
+    enabled: bool = field(default_factory=lambda: _env_str("SKILL_HOTLOADER_ENABLED", "true").lower() == "true")
+    # 监控的技能目录路径（相对于项目根目录）
+    watch_dir: str = field(default_factory=lambda: _env_str(
+        "SKILL_HOTLOADER_WATCH_DIR", "swarm/skills/builtin",
+    ))
+
+
+@dataclass(frozen=True)
 class SwarmConfig:
     """蜂群系统顶层配置。"""
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -118,6 +129,7 @@ class SwarmConfig:
     observer: ObserverConfig = field(default_factory=ObserverConfig)
     code_exec: CodeExecConfig = field(default_factory=CodeExecConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    skill_hotloader: SkillHotLoaderConfig = field(default_factory=SkillHotLoaderConfig)
 
 
 # 全局配置单例
