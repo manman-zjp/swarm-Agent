@@ -101,10 +101,12 @@ class SwarmAgent:
             )
             return
 
-        # ── 3. 条件反思（仅工具调用后） ──
+        # ── 3. 条件反思（仅复杂工具调用后） ──
         # 过滤掉 decompose_task，只看实际执行类工具
         exec_tools = [r for r in tool_records if r["tool"] != "decompose_task"]
-        if exec_tools:
+        # 只有多步工具调用或耗时超过 5 秒才触发反思，简单任务直接提交
+        needs_reflection = len(exec_tools) >= 2 or exec_ms > 5000
+        if exec_tools and needs_reflection:
             t0 = time.time()
             reflection = await self._reflect(task, result, trace_id)
             observer.trace(

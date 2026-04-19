@@ -71,6 +71,9 @@ async def lifespan(app: FastAPI):
         task = asyncio.create_task(agent.run_forever())
         agent_tasks.append(task)
 
+    # 4. 启动观测器后台刷盘
+    observer.start()
+
     logger.info(
         f"蜂群就绪 | {skill_registry.skill_count} 技能 | "
         f"{skill_registry.tool_count} 工具 | {AGENT_COUNT} Agent"
@@ -85,6 +88,7 @@ async def lifespan(app: FastAPI):
     for task in agent_tasks:
         task.cancel()
     await mcp_manager.close()
+    await observer.stop()
     logger.info("蜂群已关闭")
 
 
