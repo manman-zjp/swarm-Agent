@@ -5,6 +5,8 @@
 1. 新增 .py 文件 → 自动 import + 实例化 + 注册
 2. 修改 .py 文件 → 重新 import + 重新注册（覆盖旧版本）
 3. 删除 .py 文件 → 从注册表中注销
+4. 新增/修改 .md 文件 → 解析 Markdown + 注册为 MarkdownSkill
+5. 删除 .md 文件 → 从注册表中注销
 
 使用方式：
     hotloader = SkillHotLoader(skill_registry, watch_dir="swarm/skills/builtin")
@@ -26,13 +28,14 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from swarm.skills.base import BaseSkill
+from swarm.skills.md_skill import MarkdownSkill
 from swarm.skills.registry import SkillRegistry
 
 logger = logging.getLogger("swarm.skills.hotloader")
 
 
 class _SkillFileHandler(FileSystemEventHandler):
-    """文件系统事件处理器：监听 .py 文件变更。"""
+    """文件系统事件处理器：监听 .py 和 .md 文件变更。"""
 
     def __init__(self, hotloader: "SkillHotLoader") -> None:
         self._hotloader = hotloader
@@ -44,6 +47,9 @@ class _SkillFileHandler(FileSystemEventHandler):
         if path.suffix == ".py" and not path.name.startswith("_"):
             logger.info(f"[热插拔] 检测到新技能文件: {path.name}")
             self._hotloader._load_skill_file(path)
+        elif path.suffix == ".md":
+            logger.info(f"[热插拔] 检测到新 Markdown 技能: {path.name}")
+            self._hotloader._load_md_file(path)
 
     def on_modified(self, event) -> None:  # noqa: ANN001
         if event.is_directory:
@@ -52,6 +58,9 @@ class _SkillFileHandler(FileSystemEventHandler):
         if path.suffix == ".py" and not path.name.startswith("_"):
             logger.info(f"[热插拔] 检测到技能文件修改: {path.name}")
             self._hotloader._load_skill_file(path)
+        elif path.suffix == ".md":
+            logger.info(f"[热插拔] 检测到 Markdown 技能修改: {path.name}")
+            self._hotloader._load_md_file(path)
 
     def on_deleted(self, event) -> None:  # noqa: ANN001
         if event.is_directory:
@@ -60,6 +69,9 @@ class _SkillFileHandler(FileSystemEventHandler):
         if path.suffix == ".py" and not path.name.startswith("_"):
             logger.info(f"[热插拔] 检测到技能文件删除: {path.name}")
             self._hotloader._unload_skill_file(path)
+        elif path.suffix == ".md":
+            logger.info(f"[热插拔] 检测到 Markdown 技能删除: {path.name}")
+            self._hotloader._unload_md_file(path)
 
 
 class SkillHotLoader:
@@ -68,6 +80,7 @@ class SkillHotLoader:
     职责：
     - 启动/停止 watchdog 监控线程
     - 从 .py 文件动态加载 BaseSkill 子类并注册
+    - 从 .md 文件解析 MarkdownSkill 并注册
     - 支持手动加载指定模块
     """
 
@@ -170,12 +183,17 @@ class SkillHotLoader:
     # ── 内部方法 ──────────────────────────────────
 
     def _scan_and_load(self) -> int:
-        """扫描目录下所有 .py 文件并加载。"""
+        """扫描目录下所有 .py 和 .md 文件并加载。"""
         count = 0
+        # 加载 .py 文件
         for py_file in sorted(self._watch_dir.glob("*.py")):
             if py_file.name.startswith("_"):
                 continue
             if self._load_skill_file(py_file):
+                count += 1
+        # 加载 .md 文件
+        for md_file in sorted(self._watch_dir.glob("*.md")):
+            if self._load_md_file(md_file):
                 count += 1
         return count
 
@@ -253,4 +271,32 @@ class SkillHotLoader:
                     logger.error(f"[热插拔] 实例化技能 {name} 失败: {e}")
 
         return registered_name
+
+    # ── Markdown 技能加载方法 ──────────────────────────
+
+    def _load_md_file(self, file_path: Path) -> bool:
+        """加载 Markdown 文件为技能。"""
+        try:
+            skill = MarkdownSkill.from_file(file_path)
+            # 如果该技能已存在，先注销旧版本
+            if skill.name in self._registry._skills:
+                self._registry.unregister(skill.name)
+                logger.info(f"[热插拔] 覆盖旧版本 Markdown 技能: {skill.name}")
+
+            self._registry.register(skill)
+            module_key = f"md:{file_path.name}"
+            self._loaded_modules[module_key] = skill.name
+            logger.info(f"[热插拔] 注册 Markdown 技能: {skill.name} (来自 {file_path.name})")
+            return True
+        except Exception as e:
+            logger.error(f"[热插拔] 加载 Markdown 文件 {file_path.name} 失败: {e}")
+            return False
+
+    def _unload_md_file(self, file_path: Path) -> None:
+        """卸载 Markdown 文件对应的技能。"""
+        module_key = f"md:{file_path.name}"
+        skill_name = self._loaded_modules.pop(module_key, None)
+        if skill_name:
+            self._registry.unregister(skill_name)
+            logger.info(f"[热插拔] 已注销 Markdown 技能: {skill_name}")
 
