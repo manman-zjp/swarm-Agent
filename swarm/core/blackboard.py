@@ -47,6 +47,10 @@ class Blackboard:
         self._lock = asyncio.Lock()
         # 任务存储
         self._tasks: dict[str, Task] = {}
+        # 索引：parent_id -> 子任务id列表
+        self._children_index: dict[str, list[str]] = {}
+        # 索引：session_id -> 根任务id列表
+        self._session_index: dict[str, list[str]] = {}
         # 集体知识（从磁盘加载）
         self._skills: list[Skill] = self._load_skills()
         self._patterns: list[Pattern] = self._load_patterns()
@@ -66,6 +70,7 @@ class Blackboard:
         """添加任务到黑板。"""
         async with self._lock:
             self._tasks[task.task_id] = task
+            self._index_task(task)
             self._task_available.set()
             self._log_event(task, "task_added", {})
             logger.info(f"[黑板] 新任务: {task.task_id} | {task.action[:50]}")
@@ -86,6 +91,7 @@ class Blackboard:
         future = loop.create_future()
         async with self._lock:
             self._tasks[task.task_id] = task
+            self._index_task(task)
             self._completion_futures[task.task_id] = future
             self._task_available.set()
             self._log_event(task, "task_added", {"is_root": True})
@@ -126,6 +132,7 @@ class Blackboard:
                     priority=parent.priority,
                 )
                 self._tasks[sub.task_id] = sub
+                self._index_task(sub)
                 subtasks.append(sub)
             self._task_available.set()
             self._log_event(parent, "decomposed", {
@@ -182,9 +189,8 @@ class Blackboard:
 
     async def _check_parent_completion(self, parent_id: str) -> None:
         """检查父任务的所有子任务是否完成（已持有锁）。"""
-        children = [
-            t for t in self._tasks.values() if t.parent_id == parent_id
-        ]
+        child_ids = self._children_index.get(parent_id, [])
+        children = [self._tasks[cid] for cid in child_ids if cid in self._tasks]
         if not children:
             return
         all_done = all(
@@ -245,10 +251,15 @@ class Blackboard:
                     if pattern.trigger.lower() in action_lower:
                         result["pattern"] = pattern
                         break
-        # 查经验教训
+        # 查经验教训（关键词匹配，只返回相关的）
         for lesson in self._lessons:
             if lesson.confidence >= 0.2:
-                result["lessons"].append(lesson)
+                ctx = lesson.context.lower()
+                les = lesson.lesson.lower()
+                if ctx in action_lower or action_lower in ctx or any(
+                    word in les for word in action_lower.split()[:5] if len(word) > 1
+                ):
+                    result["lessons"].append(lesson)
         return result
 
     def add_skill(self, skill: Skill) -> None:
@@ -263,11 +274,11 @@ class Blackboard:
 
     def get_session_history(self, session_id: str, max_turns: int = 3) -> list[Task]:
         """获取会话历史（最近 N 轮的完成任务）。"""
+        task_ids = self._session_index.get(session_id, [])
         tasks = [
-            t for t in self._tasks.values()
-            if t.session_id == session_id
-            and t.status == TaskStatus.DONE
-            and t.parent_id is None
+            self._tasks[tid] for tid in task_ids
+            if tid in self._tasks
+            and self._tasks[tid].status == TaskStatus.DONE
         ]
         tasks.sort(key=lambda t: t.turn_index)
         return tasks[-max_turns:]
@@ -276,7 +287,8 @@ class Blackboard:
         return self._tasks.get(task_id)
 
     def get_children(self, parent_id: str) -> list[Task]:
-        return [t for t in self._tasks.values() if t.parent_id == parent_id]
+        child_ids = self._children_index.get(parent_id, [])
+        return [self._tasks[cid] for cid in child_ids if cid in self._tasks]
 
     # ── 知识磁盘 I/O ───────────────────────────────
 
@@ -469,8 +481,15 @@ class Blackboard:
 
     # ── 观测日志 ──────────────────────────────────────
 
+    def _index_task(self, task: Task) -> None:
+        """维护索引（已持有锁时调用）。"""
+        if task.parent_id:
+            self._children_index.setdefault(task.parent_id, []).append(task.task_id)
+        if task.session_id and task.parent_id is None:
+            self._session_index.setdefault(task.session_id, []).append(task.task_id)
+
     def _log_event(self, task: Task, event_type: str, metadata: dict) -> None:
-        """写入任务事件日志 + 触发快照持久化。"""
+        """写入任务事件日志（实时追加 JSONL）。"""
         record = {
             "timestamp": datetime.now().isoformat(),
             "task_id": task.task_id,
@@ -487,5 +506,3 @@ class Blackboard:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception:
             pass
-        # 每次状态变更都持久化快照
-        self._persist_snapshot()
