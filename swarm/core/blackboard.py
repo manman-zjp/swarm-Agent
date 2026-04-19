@@ -18,6 +18,7 @@ from swarm.core.models import (
     Task, TaskStatus, TaskType,
     Skill, Pattern, Lesson,
 )
+from swarm.config import config
 
 logger = logging.getLogger("swarm.blackboard")
 
@@ -240,20 +241,20 @@ class Blackboard:
         }
         # 查技能
         for skill in self._skills:
-            if skill.status == "active" and skill.confidence >= 0.5:
+            if skill.status == "active" and skill.confidence >= config.knowledge.skill_min_confidence:
                 if skill.trigger.lower() in action_lower or action_lower in skill.trigger.lower():
                     result["skill"] = skill
                     break
         # 查拆分模式
         if not result["skill"]:
             for pattern in self._patterns:
-                if pattern.confidence >= 0.3:
+                if pattern.confidence >= config.knowledge.pattern_min_confidence:
                     if pattern.trigger.lower() in action_lower:
                         result["pattern"] = pattern
                         break
         # 查经验教训（关键词匹配，只返回相关的）
         for lesson in self._lessons:
-            if lesson.confidence >= 0.2:
+            if lesson.confidence >= config.knowledge.lesson_min_confidence:
                 ctx = lesson.context.lower()
                 les = lesson.lesson.lower()
                 if ctx in action_lower or action_lower in ctx or any(
@@ -506,3 +507,7 @@ class Blackboard:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception:
             pass
+
+    @property
+    def tasks(self):
+        return self._tasks

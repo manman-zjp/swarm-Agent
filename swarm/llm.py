@@ -14,9 +14,9 @@ import logging
 from typing import Any
 
 from openai import AsyncOpenAI
-from dotenv import load_dotenv
 
-load_dotenv()
+from swarm.config import config
+
 logger = logging.getLogger("swarm.llm")
 
 
@@ -25,24 +25,24 @@ class LLMClient:
 
     def __init__(self) -> None:
         self.client = AsyncOpenAI(
-            api_key=os.getenv("OPENAI_API_KEY", ""),
-            base_url=os.getenv("OPENAI_API_BASE_URL", ""),
+            api_key=config.llm.api_key,
+            base_url=config.llm.base_url,
         )
-        self.model = os.getenv("MODEL_NAME", "GLM4.6")
+        self.model = config.llm.model
 
     async def chat(
         self,
         messages: list[dict[str, str]],
-        temperature: float = 0.3,
-        max_tokens: int = 4096,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> tuple[str, dict]:
         """普通对话调用，返回 (文本, token_usage)。"""
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
+                temperature=temperature if temperature is not None else config.llm.temperature,
+                max_tokens=max_tokens if max_tokens is not None else config.llm.max_tokens,
             )
             content = response.choices[0].message.content or ""
             content = self._strip_thinking(content)
@@ -62,7 +62,7 @@ class LLMClient:
         messages: list[dict],
         tools: list[dict[str, Any]],
         tool_executor: Any,
-        max_rounds: int = 10,
+        max_rounds: int | None = None,
     ) -> tuple[str, list[dict], dict]:
         """带工具调用的 ReAct 循环（动态工具列表）。
 
@@ -77,14 +77,15 @@ class LLMClient:
         """
         tool_records = []
         total_usage = {"prompt": 0, "completion": 0}
+        _max_rounds = max_rounds if max_rounds is not None else config.llm.max_tool_rounds
 
-        for round_idx in range(max_rounds):
+        for round_idx in range(_max_rounds):
             try:
                 kwargs = {
                     "model": self.model,
                     "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 4096,
+                    "temperature": config.llm.temperature,
+                    "max_tokens": config.llm.max_tokens,
                 }
                 if tools:
                     kwargs["tools"] = tools

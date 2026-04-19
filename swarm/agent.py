@@ -28,6 +28,7 @@ from swarm.prompts import (
     SYSTEM_PROMPT_TEMPLATE, USER_PROMPT_TEMPLATE,
     REFLECTION_SYSTEM, REFLECTION_USER_TEMPLATE,
 )
+from swarm.config import config
 
 logger = logging.getLogger("swarm.agent")
 
@@ -55,7 +56,7 @@ class SwarmAgent:
         while self._running:
             task = await self.blackboard.claim_pending(self.agent_id)
             if task is None:
-                await self.blackboard.wait_for_task(timeout=10.0)
+                await self.blackboard.wait_for_task(timeout=config.agent.task_wait_timeout)
                 continue
             try:
                 await self.process_task(task)
@@ -104,8 +105,11 @@ class SwarmAgent:
         # ── 3. 条件反思（仅复杂工具调用后） ──
         # 过滤掉 decompose_task，只看实际执行类工具
         exec_tools = [r for r in tool_records if r["tool"] != "decompose_task"]
-        # 只有多步工具调用或耗时超过 5 秒才触发反思，简单任务直接提交
-        needs_reflection = len(exec_tools) >= 2 or exec_ms > 5000
+        # 只有多步工具调用或耗时超阈值才触发反思，简单任务直接提交
+        needs_reflection = (
+            len(exec_tools) >= config.agent.reflection_tool_threshold
+            or exec_ms > config.agent.reflection_time_ms
+        )
         if exec_tools and needs_reflection:
             t0 = time.time()
             reflection = await self._reflect(task, result, trace_id)
@@ -157,7 +161,7 @@ class SwarmAgent:
         knowledge = self.blackboard.query_knowledge(task)
         if knowledge["lessons"]:
             cautions = "\n".join(
-                f"- {les.context}: {les.lesson}" for les in knowledge["lessons"][:3]
+                f"- {les.context}: {les.lesson}" for les in knowledge["lessons"][:config.knowledge.max_lessons_in_prompt]
             )
 
         # 构建会话上下文
@@ -224,11 +228,11 @@ class SwarmAgent:
             {"role": "system", "content": REFLECTION_SYSTEM},
             {"role": "user", "content": REFLECTION_USER_TEMPLATE.format(
                 action=task.action,
-                result=result[:2000],
+                result=result[:config.agent.reflection_result_max_chars],
             )},
         ]
 
-        response, usage = await self.llm.chat(messages, temperature=0.1)
+        response, usage = await self.llm.chat(messages, temperature=config.llm.reflection_temperature)
         return self._parse_reflection(response)
 
     # ── 辅助方法 ──────────────────────────────────

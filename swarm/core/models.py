@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
+from swarm.config import config
+
 
 class TaskStatus(str, Enum):
     """任务状态（信息素）。"""
@@ -48,7 +50,7 @@ class Task:
     claimed_by: str | None = None
     claim_expires: datetime | None = None
     retry_count: int = 0
-    max_retries: int = 3
+    max_retries: int = field(default_factory=lambda: config.task.max_retries)
     priority: int = 0
     input_schema: str | None = None
     output_schema: str | None = None
@@ -67,13 +69,14 @@ class Task:
             return False
         return True
 
-    def claim(self, agent_id: str, ttl_seconds: int = 300) -> bool:
+    def claim(self, agent_id: str, ttl_seconds: int | None = None) -> bool:
         """尝试领取（非线程安全，需外部加锁）。"""
         if not self.is_claimable():
             return False
+        _ttl = ttl_seconds if ttl_seconds is not None else config.task.claim_ttl_seconds
         self.status = TaskStatus.RUNNING
         self.claimed_by = agent_id
-        self.claim_expires = datetime.now() + timedelta(seconds=ttl_seconds)
+        self.claim_expires = datetime.now() + timedelta(seconds=_ttl)
         self.updated_at = datetime.now()
         return True
 
