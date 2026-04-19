@@ -14,16 +14,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from swarm.config import config
+
 logger = logging.getLogger("swarm.observer")
 
 LOG_DIR = Path(__file__).parent.parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 TRACE_FILE = LOG_DIR / "agent_trace.jsonl"
 KNOWLEDGE_FILE = LOG_DIR / "knowledge_changelog.jsonl"
-
-# 刷盘间隔（秒）和每批最大条数
-_FLUSH_INTERVAL = 1.0
-_FLUSH_BATCH_SIZE = 50
 
 
 class Observer:
@@ -120,9 +118,9 @@ class Observer:
     # ── 内部方法 ───────────────────────────────
 
     async def _flush_loop(self) -> None:
-        """后台循环：每隔 _FLUSH_INTERVAL 秒刷盘一次。"""
+        """后台循环：每隔配置间隔刷盘一次。"""
         while True:
-            await asyncio.sleep(_FLUSH_INTERVAL)
+            await asyncio.sleep(config.observer.flush_interval)
             self._do_flush()
 
     def _do_flush(self) -> None:
@@ -137,7 +135,7 @@ class Observer:
             return
         lines = []
         count = 0
-        while queue and count < _FLUSH_BATCH_SIZE:
+        while queue and count < config.observer.flush_batch_size:
             lines.append(json.dumps(queue.popleft(), ensure_ascii=False, default=str))
             count += 1
         try:
@@ -147,11 +145,12 @@ class Observer:
             logger.error(f"写入观测日志失败: {e}")
 
     @staticmethod
-    def _truncate(data: Any, max_len: int = 500) -> Any:
+    def _truncate(data: Any, max_len: int | None = None) -> Any:
         """截断过长的数据。"""
+        _max = max_len if max_len is not None else config.observer.trace_truncate_len
         s = str(data)
-        if len(s) > max_len:
-            return s[:max_len] + "...(truncated)"
+        if len(s) > _max:
+            return s[:_max] + "...(truncated)"
         return data
 
 

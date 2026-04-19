@@ -144,6 +144,8 @@ OPENAI_API_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 > **Compatible with any OpenAI-format API**: Qwen (DashScope), GLM (Zhipu), DeepSeek, GPT-4o, local vLLM/Ollama, etc.
 
+All runtime parameters are configurable via environment variables. See the [Configuration](#configuration) section for the full list.
+
 ### Launch
 
 ```bash
@@ -306,13 +308,14 @@ Knowledge priority: **Skills > Patterns > Lessons**. When a new task arrives, ag
 swarm-agent/
 ├── main.py                      # FastAPI entrypoint & routes
 ├── swarm/
+│   ├── config.py                # Centralized configuration (env-driven)
 │   ├── agent.py                 # Agent core: ReAct + conditional reflection
 │   ├── llm.py                   # LLM client (OpenAI-compatible)
 │   ├── prompts.py               # System prompt templates
 │   ├── core/
-│   │   ├── blackboard.py        # Blackboard: tasks + knowledge + persistence
+│   │   ├── blackboard.py        # Blackboard: tasks + knowledge + indexing
 │   │   ├── models.py            # Data models (Task, Skill, Pattern, Lesson)
-│   │   └── observer.py          # Observer: reasoning trace logger
+│   │   └── observer.py          # Observer: async buffered trace logger
 │   ├── skills/
 │   │   ├── base.py              # Skill abstract base class
 │   │   ├── registry.py          # Skill registry + tool routing
@@ -325,7 +328,7 @@ swarm-agent/
 │       └── mcp_servers.json     # MCP server configuration
 ├── docs/
 │   └── architecture.md          # Architecture design document
-├── .env.example                 # Environment template
+├── .env.example                 # Environment template (all parameters)
 ├── pyproject.toml               # Project metadata & dependencies
 └── LICENSE                      # Apache-2.0
 ```
@@ -334,12 +337,71 @@ swarm-agent/
 
 ## Configuration
 
-| Parameter | Location | Default | Description |
-|---|---|---|---|
-| Agent count | `main.py` | 3 | Number of concurrent agents |
-| Request timeout | `main.py` | 300s | Max wait time per chat request |
-| Max tool rounds | `swarm/llm.py` | 10 | ReAct loop tool-call limit |
-| Task claim TTL | `swarm/core/models.py` | 300s | Task lock timeout |
+All parameters are centralized in `swarm/config.py` and driven by environment variables (with sensible defaults). Just set them in `.env` — no code changes needed.
+
+<details>
+<summary><b>LLM Settings</b></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `MODEL_NAME` | `qwen-max` | LLM model name |
+| `OPENAI_API_KEY` | (empty) | API key for LLM provider |
+| `OPENAI_API_BASE_URL` | (empty) | Base URL for OpenAI-compatible API |
+| `LLM_TEMPERATURE` | `0.3` | Default sampling temperature |
+| `LLM_MAX_TOKENS` | `4096` | Max tokens per LLM call |
+| `LLM_MAX_TOOL_ROUNDS` | `10` | Max ReAct tool-calling rounds |
+| `LLM_REFLECTION_TEMPERATURE` | `0.1` | Temperature for reflection calls |
+
+</details>
+
+<details>
+<summary><b>Agent Behavior</b></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `AGENT_COUNT` | `3` | Number of concurrent agents |
+| `AGENT_TASK_WAIT_TIMEOUT` | `10.0` | Seconds to wait before re-polling for tasks |
+| `AGENT_REFLECTION_TOOL_THRESHOLD` | `2` | Min tool calls to trigger reflection |
+| `AGENT_REFLECTION_TIME_MS` | `5000` | Min execution time (ms) to trigger reflection |
+| `AGENT_REFLECTION_RESULT_MAX_CHARS` | `2000` | Max chars of result sent to reflection LLM |
+
+</details>
+
+<details>
+<summary><b>Task Settings</b></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `TASK_CHAT_TIMEOUT` | `300.0` | Max seconds to wait for chat response |
+| `TASK_CLAIM_TTL_SECONDS` | `300` | Task lock expiry (prevents stuck tasks) |
+| `TASK_MAX_RETRIES` | `3` | Max retry attempts for failed tasks |
+| `TASK_SESSION_HISTORY_MAX_TURNS` | `3` | Recent turns included in session context |
+
+</details>
+
+<details>
+<summary><b>Knowledge Thresholds</b></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `KNOWLEDGE_SKILL_MIN_CONFIDENCE` | `0.5` | Min confidence to use a learned skill |
+| `KNOWLEDGE_PATTERN_MIN_CONFIDENCE` | `0.3` | Min confidence to use a decomposition pattern |
+| `KNOWLEDGE_LESSON_MIN_CONFIDENCE` | `0.2` | Min confidence to include a lesson |
+| `KNOWLEDGE_MAX_LESSONS_IN_PROMPT` | `3` | Max lessons injected into prompt |
+
+</details>
+
+<details>
+<summary><b>Observer & Code Execution</b></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `OBSERVER_FLUSH_INTERVAL` | `1.0` | Seconds between trace log flushes |
+| `OBSERVER_FLUSH_BATCH_SIZE` | `50` | Max records per flush batch |
+| `OBSERVER_TRACE_TRUNCATE_LEN` | `500` | Max chars for trace data truncation |
+| `CODE_EXEC_TIMEOUT` | `120.0` | Seconds before killing a code execution |
+
+</details>
 
 <br>
 

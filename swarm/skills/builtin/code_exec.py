@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from swarm.skills.base import BaseSkill
+from swarm.config import config
 
 
 class CodeExecutionSkill(BaseSkill):
@@ -67,8 +68,9 @@ class CodeExecutionSkill(BaseSkill):
         return f"未知工具: {tool_name}"
 
     @staticmethod
-    async def _run_local(cmd: list[str], timeout: float = 120) -> str:
+    async def _run_local(cmd: list[str], timeout: float | None = None) -> str:
         """在本地子进程中执行命令。"""
+        _timeout = timeout if timeout is not None else config.code_exec.timeout
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -76,7 +78,7 @@ class CodeExecutionSkill(BaseSkill):
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout,
+                proc.communicate(), timeout=_timeout,
             )
             stdout = stdout_bytes.decode("utf-8", errors="replace").strip()
             stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
@@ -87,4 +89,4 @@ class CodeExecutionSkill(BaseSkill):
         except asyncio.TimeoutError:
             proc.kill()
             await proc.communicate()
-            return f"执行超时（{timeout}秒），已强制终止。"
+            return f"执行超时（{_timeout}秒），已强制终止。"

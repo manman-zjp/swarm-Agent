@@ -25,6 +25,7 @@ from swarm.agent import SwarmAgent
 from swarm.skills.registry import SkillRegistry
 from swarm.skills.builtin import CodeExecutionSkill, TaskDecomposeSkill
 from swarm.mcp.client import MCPManager
+from swarm.config import config
 
 # ── 日志配置 ──
 logging.basicConfig(
@@ -35,7 +36,6 @@ logging.basicConfig(
 logger = logging.getLogger("swarm.main")
 
 # ── 全局组件 ──
-AGENT_COUNT = 3
 blackboard = Blackboard()
 llm = LLMClient()
 skill_registry = SkillRegistry()
@@ -59,8 +59,8 @@ async def lifespan(app: FastAPI):
         logger.info(f"MCP 服务器加载完成: {mcp_count} 个")
 
     # 3. 启动 Agent 池
-    logger.info(f"启动蜂群：{AGENT_COUNT} 个 Agent")
-    for i in range(AGENT_COUNT):
+    logger.info(f"启动蜂群：{config.agent.count} 个 Agent")
+    for i in range(config.agent.count):
         agent = SwarmAgent(
             agent_id=f"agent-{i+1:02d}",
             blackboard=blackboard,
@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
 
     logger.info(
         f"蜂群就绪 | {skill_registry.skill_count} 技能 | "
-        f"{skill_registry.tool_count} 工具 | {AGENT_COUNT} Agent"
+        f"{skill_registry.tool_count} 工具 | {config.agent.count} Agent"
     )
 
     yield
@@ -134,10 +134,10 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     # 等待任务完成（带超时）
     try:
-        completed_task = await asyncio.wait_for(future, timeout=300.0)
+        completed_task = await asyncio.wait_for(future, timeout=config.task.chat_timeout)
         reply = completed_task.output_text or "任务完成，但无输出。"
     except asyncio.TimeoutError:
-        reply = "任务处理超时（300秒），请稍后重试。"
+        reply = f"任务处理超时（{int(config.task.chat_timeout)}秒），请稍后重试。"
 
     logger.info(f"[回复] session={session_id} | {reply[:80]}")
 
@@ -215,7 +215,7 @@ async def board_knowledge() -> dict:
 async def board_session(session_id: str) -> dict:
     """指定会话的完整历史。"""
     all_tasks = [
-        t for t in blackboard._tasks.values()
+        t for t in blackboard.tasks.values()
         if t.session_id == session_id
     ]
     if not all_tasks:
