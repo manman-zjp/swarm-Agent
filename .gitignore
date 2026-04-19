@@ -39,4 +39,6 @@ swarm/data/board_snapshot.json
 swarm/data/skills.json
 swarm/data/patterns.json
 swarm/data/lessons.json
-/docs/architecture.md
+swarm/data/*.db
+swarm/data/*.db-shm
+swarm/data/*.db-wal

@@ -15,11 +15,15 @@ import uuid
 
 import uvicorn
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from swarm.core.blackboard import Blackboard
 from swarm.core.observer import observer
+from swarm.core.storage import create_store
 from swarm.llm import LLMClient
 from swarm.agent import SwarmAgent
 from swarm.skills.registry import SkillRegistry
@@ -36,7 +40,13 @@ logging.basicConfig(
 logger = logging.getLogger("swarm.main")
 
 # ── 全局组件 ──
-blackboard = Blackboard()
+session_store = create_store(
+    config.storage.db_url,
+    pool_size=config.storage.pool_size,
+    max_overflow=config.storage.pool_max_overflow,
+    pool_recycle=config.storage.pool_recycle,
+)
+blackboard = Blackboard(store=session_store)
 llm = LLMClient()
 skill_registry = SkillRegistry()
 mcp_manager = MCPManager(skill_registry)
@@ -95,6 +105,18 @@ async def lifespan(app: FastAPI):
 # ── FastAPI ──
 app = FastAPI(title="蜂群 Agent 矩阵", lifespan=lifespan)
 
+# ── 静态文件 ──
+STATIC_DIR = Path(__file__).parent / "swarm" / "static"
+
+
+@app.get("/")
+async def index():
+    """主页 → 控制台 UI。"""
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -112,8 +134,8 @@ async def chat(req: ChatRequest) -> ChatResponse:
     """用户入口：发送消息，等待蜂群处理后返回结果。"""
     session_id = req.session_id or str(uuid.uuid4())[:8]
 
-    # 计算 turn_index
-    history = blackboard.get_session_history(session_id, max_turns=100)
+    # 计算 turn_index（内存 + DB）
+    history = blackboard.get_session_full_history(session_id)
     turn_index = len(history) + 1
 
     # 构建上下文引用（最近 3 轮）
@@ -166,11 +188,14 @@ async def health() -> dict:
 
 @app.get("/board")
 async def board_overview() -> dict:
-    """黑板概览。"""
+    """黑板概览（包含 DB 中的历史会话）。"""
     snap = blackboard.snapshot()
+    # 合并 DB 中的历史会话
+    all_session_ids = blackboard.get_all_session_ids()
     return {
         "summary": snap["summary"],
         "sessions": snap["sessions"],
+        "all_session_ids": all_session_ids,
     }
 
 
@@ -213,17 +238,14 @@ async def board_knowledge() -> dict:
 
 @app.get("/board/sessions/{session_id}")
 async def board_session(session_id: str) -> dict:
-    """指定会话的完整历史。"""
-    all_tasks = [
-        t for t in blackboard.tasks.values()
-        if t.session_id == session_id
-    ]
-    if not all_tasks:
+    """指定会话的完整历史（支持从 DB 恢复）。"""
+    # 优先从内存获取，否则回走 DB
+    full_history = blackboard.get_session_full_history(session_id)
+    if not full_history:
         return {"error": f"会话 {session_id} 不存在"}
-    all_tasks.sort(key=lambda t: (t.turn_index, t.created_at))
-    root_tasks = [t for t in all_tasks if t.parent_id is None]
+
     turns = []
-    for rt in root_tasks:
+    for rt in full_history:
         children = blackboard.get_children(rt.task_id)
         turns.append({
             "turn_index": rt.turn_index,
@@ -240,9 +262,29 @@ async def board_session(session_id: str) -> dict:
         })
     return {
         "session_id": session_id,
-        "total_turns": len(root_tasks),
-        "total_tasks": len(all_tasks),
+        "total_turns": len(full_history),
+        "total_tasks": len(full_history),
         "turns": turns,
+    }
+
+
+@app.get("/board/sessions/{session_id}/memory")
+async def board_session_memory(session_id: str) -> dict:
+    """指定会话的三层记忆：核心事实 + 滚动摘要 + 窗口状态。"""
+    memory = blackboard.get_session_memory(session_id)
+    facts = blackboard.get_session_facts(session_id)
+    return {
+        "session_id": session_id,
+        "summary": {
+            "text": memory.summary if memory else "",
+            "up_to_turn": memory.summary_up_to_turn if memory else 0,
+            "total_turns": memory.total_turns if memory else 0,
+        },
+        "facts": [
+            {"key": f.fact_key, "value": f.fact_value, "source_turn": f.source_turn}
+            for f in facts
+        ],
+        "fact_count": len(facts),
     }
 
 

@@ -6,6 +6,8 @@ from swarm.core.models import (
     Lesson,
     Pattern,
     ReflectionResult,
+    SessionFact,
+    SessionMemory,
     Skill,
     Task,
     TaskStatus,
@@ -114,3 +116,46 @@ class TestReflectionResult:
         result = ReflectionResult(passed=False, fix_plan="retry with different approach")
         assert result.passed is False
         assert result.fix_plan == "retry with different approach"
+
+
+class TestSessionMemory:
+    def test_default_creation(self):
+        mem = SessionMemory()
+        assert mem.session_id == ""
+        assert mem.summary == ""
+        assert mem.summary_up_to_turn == 0
+        assert mem.total_turns == 0
+
+    def test_with_values(self):
+        mem = SessionMemory(
+            session_id="sess-01",
+            summary="用户在做电商项目",
+            summary_up_to_turn=5,
+            total_turns=8,
+        )
+        assert mem.session_id == "sess-01"
+        assert mem.summary == "用户在做电商项目"
+        assert mem.summary_up_to_turn == 5
+        assert mem.total_turns == 8
+        assert isinstance(mem.created_at, datetime)
+
+
+class TestSessionFact:
+    def test_default_creation(self):
+        fact = SessionFact()
+        assert fact.session_id == ""
+        assert fact.fact_key == ""
+        assert fact.fact_value == ""
+        assert fact.source_turn == 0
+
+    def test_with_values(self):
+        fact = SessionFact(
+            session_id="sess-01",
+            fact_key="tech_stack",
+            fact_value="FastAPI + PostgreSQL",
+            source_turn=3,
+        )
+        assert fact.fact_key == "tech_stack"
+        assert fact.fact_value == "FastAPI + PostgreSQL"
+        assert fact.source_turn == 3
+        assert isinstance(fact.created_at, datetime)

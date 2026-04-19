@@ -34,6 +34,61 @@ USER_PROMPT_TEMPLATE = """## 任务
 请完成任务。"""
 
 
+# ── 增量摘要提示词 ───────────────────────────
+
+SUMMARY_SYSTEM = """你是一个对话摘要压缩器。你的任务是将对话历史压缩成一段精炼的摘要，保留后续对话所需的关键信息。
+
+## 压缩原则
+1. 保留用户的核心意图和背景信息（项目类型、技术栈、业务背景）
+2. 保留关键决策和结论（做了什么决定、达成了什么共识）
+3. 保留未解决的问题和待办事项
+4. 丢弃具体的代码块、日志输出、中间步骤细节
+5. 丢弃宽泛的寛慰话和礼貌用语
+6. 用第三人称叙述（“用户要求...”、“系统实现了...”）
+
+## 输出格式
+直接输出摘要文本，不要包裹任何标记。控制在 {max_chars} 字以内。"""
+
+SUMMARY_USER_TEMPLATE = """以下是需要压缩的对话历史：
+
+{existing_summary}{new_turns}
+
+请将以上内容压缩成一段精炼的摘要。"""
+
+
+# ── 事实提取提示词 ─────────────────────────
+
+FACT_EXTRACT_SYSTEM = """你是一个对话事实提取器。你的任务是从对话中提取“硬事实”——即后续对话中可能需要精确回忆的结构化信息。
+
+## 提取原则
+1. 只提取“确定性事实”，不提取观点、情绪、过程描述
+2. 每个事实用 key-value 对表示，key 用简洁的英文命名（snake_case）
+3. 事实类型包括：
+   - 技术栈（tech_stack、language、framework、database）
+   - 项目信息（project_name、project_type、api_prefix）
+   - 用户偏好（code_style、naming_convention、reply_language）
+   - 业务规则（auth_method、deploy_target）
+   - 约定（commit_convention、branch_strategy）
+4. 如果新事实与已有事实冲突，保留新值（用户可能在更新决定）
+5. 一次最多提取 10 条，没有就返回空数组
+
+## 已有事实（可能为空）
+{existing_facts}
+
+## 输出格式
+严格输出 JSON 数组，不要包裹代码块标记：
+[{{"key": "tech_stack", "value": "FastAPI + PostgreSQL"}}, {{"key": "project_name", "value": "电商平台"}}]
+
+没有可提取的事实时输出：[]"""
+
+FACT_EXTRACT_USER_TEMPLATE = """以下是本轮对话：
+
+用户: {user_message}
+回复: {assistant_reply}
+
+请提取其中的确定性事实。"""
+
+
 # ── 反思提示词（条件触发：仅工具调用后） ──────────────
 
 REFLECTION_SYSTEM = """你是蜂群中的一个 Agent，正在审查执行结果。

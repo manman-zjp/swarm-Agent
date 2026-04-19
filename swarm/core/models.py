@@ -123,6 +123,42 @@ class Skill:
 
 
 @dataclass
+class SessionMemory:
+    """会话记忆：滚动摘要 + 窗口控制。
+
+    采用业界主流的「滑动窗口 + 增量摘要」模式：
+    - summary: 窗口外历史轮次的压缩摘要
+    - summary_up_to_turn: 摘要覆盖到第几轮（含）
+    - 窗口内的最近 N 轮保持原文，注入 prompt
+    - 每次新轮次完成后，若超出窗口，触发增量压缩
+    """
+    session_id: str = ""
+    summary: str = ""  # 窗口外历史的压缩摘要
+    summary_up_to_turn: int = 0  # 摘要已覆盖到第几轮（含）
+    total_turns: int = 0  # 当前会话总轮次
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class SessionFact:
+    """会话事实：KV 结构的精确记忆。
+
+    从对话中提取的结构化事实，始终注入 prompt，解决摘要有损压缩
+    导致精确信息丢失的问题。例如：
+    - tech_stack: "FastAPI + PostgreSQL"
+    - api_prefix: "/api/v2"
+    - project_name: "蜂群Agent"
+    """
+    session_id: str = ""
+    fact_key: str = ""       # 事实键（如 tech_stack、project_name）
+    fact_value: str = ""     # 事实值
+    source_turn: int = 0     # 提取自第几轮对话
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
 class ReflectionResult:
     """第三层反思的输出。"""
     passed: bool = True
