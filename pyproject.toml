@@ -14,7 +14,12 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
 ]
 dependencies = [
     "python-dotenv",
@@ -25,12 +30,36 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = ["mcp (>=1.0.0)"]
+dev = [
+    "pytest (>=8.0)",
+    "pytest-asyncio (>=0.23)",
+    "ruff (>=0.4)",
+]
 
 [project.urls]
 Homepage = "https://github.com/manman-zjp/swarm-Agent"
 Repository = "https://github.com/manman-zjp/swarm-Agent"
+Issues = "https://github.com/manman-zjp/swarm-Agent/issues"
+Changelog = "https://github.com/manman-zjp/swarm-Agent/blob/master/CHANGELOG.md"
 
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["swarm"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
