@@ -7,24 +7,36 @@ __pycache__/
 env/
 venv/
 .venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
 .env
 
 # Poetry
-poetry.lock
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
 # IDE
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 
-# Swarm runtime data (logs + snapshots, NOT config templates)
+# OS
+.DS_Store
+Thumbs.db
+
+# Swarm runtime data (logs + runtime snapshots, NOT config templates)
 swarm/logs/
 swarm/data/board_snapshot.json
 swarm/data/skills.json
 swarm/data/patterns.json
 swarm/data/lessons.json
-
-docs/
+/docs/architecture.md
