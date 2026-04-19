@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Storage pool configuration: `SESSION_POOL_SIZE`, `SESSION_POOL_MAX_OVERFLOW`, `SESSION_POOL_RECYCLE`
 - Optional dependency groups: `[mysql]`, `[pgsql]`, `[all-db]`
 - Comprehensive `.env.example` covering all configuration parameters
+- Skill hot-plugging: `watchdog` file monitoring + `importlib` reload
+- HTTP skill management API: `/skills/load`, `/skills/reload/{name}`, `DELETE /skills/{name}`
+- `SkillHotLoader` class: automatic skill discovery from `.py` files
 
 ### Changed
 - Storage layer unified from three separate classes to single `SQLAlchemySessionStore`
