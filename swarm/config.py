@@ -56,6 +56,10 @@ class TaskConfig:
     claim_ttl_seconds: int = field(default_factory=lambda: _env_int("TASK_CLAIM_TTL_SECONDS", 300))
     max_retries: int = field(default_factory=lambda: _env_int("TASK_MAX_RETRIES", 3))
     session_history_max_turns: int = field(default_factory=lambda: _env_int("TASK_SESSION_HISTORY_MAX_TURNS", 3))
+    # 增量摘要配置
+    summary_window_size: int = field(default_factory=lambda: _env_int("TASK_SUMMARY_WINDOW_SIZE", 3))
+    summary_max_chars: int = field(default_factory=lambda: _env_int("TASK_SUMMARY_MAX_CHARS", 800))
+    summary_turn_detail_chars: int = field(default_factory=lambda: _env_int("TASK_SUMMARY_TURN_DETAIL_CHARS", 500))
 
 
 @dataclass(frozen=True)
@@ -77,6 +81,28 @@ class ObserverConfig:
 
 
 @dataclass(frozen=True)
+class StorageConfig:
+    """会话持久化存储配置。
+
+    db_url 格式:
+    - SQLite（默认）: sqlite:///swarm/data/sessions.db
+    - MySQL:         mysql://user:pass@host:3306/swarm
+    - PostgreSQL:    postgresql://user:pass@host:5432/swarm
+    """
+    db_url: str = field(default_factory=lambda: _env_str(
+        "SESSION_DB_URL", "sqlite:///swarm/data/sessions.db",
+    ))
+    # 每个会话最多保留的 KV 事实条数
+    fact_max_per_session: int = field(default_factory=lambda: _env_int(
+        "SESSION_FACT_MAX_PER_SESSION", 50,
+    ))
+    # 连接池参数（仅 MySQL / PostgreSQL 生效，SQLite 使用单连接复用）
+    pool_size: int = field(default_factory=lambda: _env_int("SESSION_POOL_SIZE", 5))
+    pool_max_overflow: int = field(default_factory=lambda: _env_int("SESSION_POOL_MAX_OVERFLOW", 10))
+    pool_recycle: int = field(default_factory=lambda: _env_int("SESSION_POOL_RECYCLE", 3600))
+
+
+@dataclass(frozen=True)
 class CodeExecConfig:
     """代码执行配置。"""
     timeout: float = field(default_factory=lambda: _env_float("CODE_EXEC_TIMEOUT", 120.0))
@@ -91,6 +117,7 @@ class SwarmConfig:
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     observer: ObserverConfig = field(default_factory=ObserverConfig)
     code_exec: CodeExecConfig = field(default_factory=CodeExecConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
 
 
 # 全局配置单例

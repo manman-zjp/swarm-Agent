@@ -16,8 +16,9 @@ from typing import Any
 
 from swarm.core.models import (
     Task, TaskStatus, TaskType,
-    Skill, Pattern, Lesson,
+    Skill, Pattern, Lesson, SessionMemory, SessionFact,
 )
+from swarm.core.storage import SessionStore
 from swarm.config import config
 
 logger = logging.getLogger("swarm.blackboard")
@@ -44,8 +45,10 @@ def _serialize_dt(obj: Any) -> Any:
 class Blackboard:
     """内存黑板，asyncio 安全。"""
 
-    def __init__(self) -> None:
+    def __init__(self, store: SessionStore | None = None) -> None:
         self._lock = asyncio.Lock()
+        # 持久化存储（可选，None 时仅内存）
+        self._store = store
         # 任务存储
         self._tasks: dict[str, Task] = {}
         # 索引：parent_id -> 子任务id列表
@@ -56,14 +59,45 @@ class Blackboard:
         self._skills: list[Skill] = self._load_skills()
         self._patterns: list[Pattern] = self._load_patterns()
         self._lessons: list[Lesson] = self._load_lessons()
+        # 会话记忆（session_id -> SessionMemory），从 DB 预热
+        self._session_memories: dict[str, SessionMemory] = self._load_memories_from_store()
+        # 会话事实缓存（session_id -> list[SessionFact]），按需从 DB 加载
+        self._session_facts: dict[str, list[SessionFact]] = {}
+        # 从 DB 恢复会话索引（仅恢复 session_id 列表，不加载全部任务）
+        self._persisted_session_ids: set[str] = self._load_session_ids_from_store()
         # 事件通知：有新的 pending 任务时 set
         self._task_available = asyncio.Event()
         # 任务完成回调：task_id -> Future
         self._completion_futures: dict[str, asyncio.Future] = {}
         logger.info(
             f"[黑板] 知识加载完成: {len(self._skills)} 技能, "
-            f"{len(self._patterns)} 模式, {len(self._lessons)} 经验"
+            f"{len(self._patterns)} 模式, {len(self._lessons)} 经验 | "
+            f"已加载 {len(self._session_memories)} 个会话摘要"
         )
+
+    def _load_memories_from_store(self) -> dict[str, SessionMemory]:
+        """从持久化存储加载所有会话摘要。"""
+        if not self._store:
+            return {}
+        try:
+            memories = self._store.load_all_memories()
+            return {m.session_id: m for m in memories}
+        except Exception as e:
+            logger.error(f"[黑板] 加载会话摘要失败: {e}")
+            return {}
+
+    def _load_session_ids_from_store(self) -> set[str]:
+        """从持久化存储加载所有 session_id（用于启动恢复）。"""
+        if not self._store:
+            return set()
+        try:
+            ids = self._store.load_all_session_ids()
+            if ids:
+                logger.info(f"[黑板] 从 DB 恢复 {len(ids)} 个会话索引")
+            return set(ids)
+        except Exception as e:
+            logger.error(f"[黑板] 加载会话索引失败: {e}")
+            return set()
 
     # ── 任务管理 ──────────────────────────────────────
 
@@ -170,6 +204,21 @@ class Blackboard:
 
             self._log_event(task, "done", {"has_lessons": bool(lessons)})
             logger.info(f"[黑板] 任务完成: {task.task_id}")
+
+            # 持久化对话轮次（仅根任务 = 用户一轮对话）
+            if task.parent_id is None and task.session_id and self._store:
+                try:
+                    self._store.save_turn(
+                        session_id=task.session_id,
+                        turn_index=task.turn_index,
+                        action=task.action,
+                        output_text=output_text or "",
+                        status=task.status.value,
+                        task_id=task.task_id,
+                    )
+                    self._persisted_session_ids.add(task.session_id)
+                except Exception as e:
+                    logger.error(f"[黑板] 持久化对话轮次失败: {e}")
 
             # 检查父任务是否所有子任务都完成了
             if task.parent_id:
@@ -290,6 +339,124 @@ class Blackboard:
     def get_children(self, parent_id: str) -> list[Task]:
         child_ids = self._children_index.get(parent_id, [])
         return [self._tasks[cid] for cid in child_ids if cid in self._tasks]
+
+    def get_session_memory(self, session_id: str) -> SessionMemory | None:
+        """获取会话的滚动摘要记忆。"""
+        return self._session_memories.get(session_id)
+
+    def update_session_memory(
+        self, session_id: str, summary: str, up_to_turn: int, total_turns: int,
+    ) -> None:
+        """更新会话摘要（内存 + 持久化）。"""
+        mem = self._session_memories.get(session_id)
+        if mem:
+            mem.summary = summary
+            mem.summary_up_to_turn = up_to_turn
+            mem.total_turns = total_turns
+            mem.updated_at = datetime.now()
+        else:
+            mem = SessionMemory(
+                session_id=session_id,
+                summary=summary,
+                summary_up_to_turn=up_to_turn,
+                total_turns=total_turns,
+            )
+            self._session_memories[session_id] = mem
+        # 持久化
+        if self._store:
+            try:
+                self._store.save_memory(mem)
+            except Exception as e:
+                logger.error(f"[黑板] 持久化会话摘要失败: {e}")
+        logger.info(
+            f"[黑板] 会话摘要更新: {session_id} | "
+            f"覆盖到第{up_to_turn}轮 | 摘要{len(summary)}字"
+        )
+
+    # ── 会话事实管理 ──────────────────────────────────
+
+    def get_session_facts(self, session_id: str) -> list[SessionFact]:
+        """获取会话的全部 KV 事实（优先内存缓存，miss 时从 DB 加载）。"""
+        if session_id in self._session_facts:
+            return self._session_facts[session_id]
+        # 从 DB 加载
+        if self._store:
+            try:
+                facts = self._store.load_facts(session_id)
+                self._session_facts[session_id] = facts
+                return facts
+            except Exception as e:
+                logger.error(f"[黑板] 加载会话事实失败: {e}")
+        return []
+
+    def update_session_facts(self, session_id: str, new_facts: list[SessionFact]) -> None:
+        """合并新事实到会话（UPSERT：同 key 覆盖，新 key 追加）。"""
+        if not new_facts:
+            return
+        existing = self.get_session_facts(session_id)
+        existing_map = {f.fact_key: f for f in existing}
+        for nf in new_facts:
+            nf.session_id = session_id
+            existing_map[nf.fact_key] = nf
+        merged = list(existing_map.values())
+        # 限制条数
+        max_count = config.storage.fact_max_per_session
+        if len(merged) > max_count:
+            merged.sort(key=lambda f: f.updated_at)
+            merged = merged[-max_count:]
+        self._session_facts[session_id] = merged
+        # 持久化
+        if self._store:
+            try:
+                self._store.save_facts(new_facts)
+            except Exception as e:
+                logger.error(f"[黑板] 持久化会话事实失败: {e}")
+        logger.info(
+            f"[黑板] 会话事实更新: {session_id} | "
+            f"新增/更新{len(new_facts)}条 | 总计{len(merged)}条"
+        )
+
+    def get_session_full_history(self, session_id: str) -> list[Task]:
+        """获取会话全量已完成的根任务（按 turn_index 排序）。
+        优先从内存查找，内存为空时回走 DB。"""
+        task_ids = self._session_index.get(session_id, [])
+        tasks = [
+            self._tasks[tid] for tid in task_ids
+            if tid in self._tasks
+            and self._tasks[tid].status == TaskStatus.DONE
+        ]
+        tasks.sort(key=lambda t: t.turn_index)
+        if tasks:
+            return tasks
+        # 内存为空，尝试从 DB 加载
+        return self._load_turns_from_store(session_id)
+
+    def _load_turns_from_store(self, session_id: str) -> list[Task]:
+        """从 DB 加载对话历史，转换为类 Task 对象（只读，不回写内存索引）。"""
+        if not self._store:
+            return []
+        try:
+            rows = self._store.load_turns(session_id)
+            return [
+                Task(
+                    task_id=r["task_id"] or f"hist-{r['turn_index']}",
+                    action=r["action"],
+                    status=TaskStatus.DONE,
+                    session_id=r["session_id"],
+                    turn_index=r["turn_index"],
+                    output_text=r["output_text"],
+                )
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error(f"[黑板] 从 DB 加载对话历史失败: {e}")
+            return []
+
+    def get_all_session_ids(self) -> list[str]:
+        """获取所有会话 ID（内存 + DB 去重合并）。"""
+        ids = set(self._session_index.keys())
+        ids.update(self._persisted_session_ids)
+        return sorted(ids)
 
     # ── 知识磁盘 I/O ───────────────────────────────
 

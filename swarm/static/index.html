@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>蜂群 Agent 控制台</title>
+<style>
+:root {
+  --bg: #0f1117; --bg2: #1a1d27; --bg3: #242736;
+  --border: #2e3148; --text: #e4e4e7; --text2: #9ca3af;
+  --primary: #6366f1; --primary-hover: #818cf8;
+  --success: #22c55e; --warn: #f59e0b; --danger: #ef4444;
+  --chat-user: #312e81; --chat-bot: #1e293b;
+  --radius: 8px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; overflow:hidden; font-size:14px; }
+
+/* ── 侧边栏 ── */
+.sidebar { width:220px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
+.sidebar-header { padding:20px 16px 12px; border-bottom:1px solid var(--border); }
+.sidebar-header h1 { font-size:16px; font-weight:700; }
+.sidebar-header .ver { font-size:11px; color:var(--text2); margin-top:2px; }
+.nav { flex:1; padding:8px; overflow-y:auto; }
+.nav-item { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:var(--radius); cursor:pointer; color:var(--text2); transition:all .15s; margin-bottom:2px; font-size:13px; }
+.nav-item:hover { background:var(--bg3); color:var(--text); }
+.nav-item.active { background:var(--primary); color:#fff; }
+.nav-item svg { width:18px; height:18px; flex-shrink:0; }
+.nav-badge { margin-left:auto; background:var(--danger); color:#fff; font-size:10px; padding:1px 6px; border-radius:10px; min-width:18px; text-align:center; }
+.sidebar-footer { padding:12px 16px; border-top:1px solid var(--border); }
+.status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--success); margin-right:6px; }
+.sidebar-footer span { font-size:12px; color:var(--text2); }
+
+/* ── 主区域 ── */
+.main { flex:1; display:flex; flex-direction:column; min-width:0; }
+.page { display:none; flex:1; flex-direction:column; overflow:hidden; }
+.page.active { display:flex; }
+
+/* ── 顶栏 ── */
+.topbar { height:52px; border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 20px; gap:12px; flex-shrink:0; background:var(--bg2); }
+.topbar h2 { font-size:15px; font-weight:600; }
+.topbar .actions { margin-left:auto; display:flex; gap:8px; }
+
+/* ── 按钮 ── */
+.btn { padding:6px 14px; border-radius:var(--radius); border:1px solid var(--border); background:var(--bg3); color:var(--text); cursor:pointer; font-size:12px; transition:all .15s; display:inline-flex; align-items:center; gap:5px; }
+.btn:hover { border-color:var(--primary); color:var(--primary); }
+.btn-primary { background:var(--primary); border-color:var(--primary); color:#fff; }
+.btn-primary:hover { background:var(--primary-hover); }
+.btn-sm { padding:4px 10px; font-size:11px; }
+.btn-danger { border-color:var(--danger); color:var(--danger); }
+.btn-danger:hover { background:var(--danger); color:#fff; }
+
+/* ── 对话页 ── */
+.chat-layout { flex:1; display:flex; overflow:hidden; }
+.chat-sidebar { width:240px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; }
+.chat-sidebar-header { padding:12px; border-bottom:1px solid var(--border); }
+.chat-sidebar-header .btn { width:100%; justify-content:center; }
+.session-list { flex:1; overflow-y:auto; padding:6px; }
+.session-item { padding:10px 12px; border-radius:var(--radius); cursor:pointer; margin-bottom:2px; }
+.session-item:hover { background:var(--bg3); }
+.session-item.active { background:var(--bg3); border-left:3px solid var(--primary); }
+.session-item .sid { font-size:12px; font-weight:600; }
+.session-item .meta { font-size:11px; color:var(--text2); margin-top:2px; }
+.chat-main { flex:1; display:flex; flex-direction:column; }
+.chat-messages { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
+.msg { max-width:75%; padding:12px 16px; border-radius:12px; line-height:1.6; word-break:break-word; white-space:pre-wrap; font-size:13px; }
+.msg.user { background:var(--chat-user); align-self:flex-end; border-bottom-right-radius:4px; }
+.msg.bot { background:var(--chat-bot); align-self:flex-start; border-bottom-left-radius:4px; }
+.msg .msg-meta { font-size:10px; color:var(--text2); margin-top:6px; }
+.chat-input-area { padding:16px 20px; border-top:1px solid var(--border); background:var(--bg2); display:flex; gap:10px; }
+.chat-input-area textarea { flex:1; background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius); padding:10px 14px; color:var(--text); font-size:13px; resize:none; height:44px; font-family:inherit; outline:none; }
+.chat-input-area textarea:focus { border-color:var(--primary); }
+.chat-input-area .btn { height:44px; padding:0 20px; }
+.typing-indicator { color:var(--text2); font-size:12px; font-style:italic; padding:4px 0; }
+
+/* ── 仪表盘 ── */
+.dashboard { padding:24px; overflow-y:auto; flex:1; }
+.stat-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:16px; margin-bottom:24px; }
+.stat-card { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:20px; }
+.stat-card .label { font-size:12px; color:var(--text2); margin-bottom:4px; }
+.stat-card .value { font-size:28px; font-weight:700; }
+.stat-card .sub { font-size:11px; color:var(--text2); margin-top:4px; }
+.stat-card.highlight { border-left:3px solid var(--primary); }
+.section-title { font-size:14px; font-weight:600; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+
+/* ── 表格 ── */
+.table-wrap { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+.table-toolbar { padding:12px 16px; border-bottom:1px solid var(--border); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.table-toolbar select, .table-toolbar input { background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius); padding:6px 10px; color:var(--text); font-size:12px; outline:none; }
+table { width:100%; border-collapse:collapse; }
+th { text-align:left; padding:10px 16px; font-size:11px; text-transform:uppercase; color:var(--text2); border-bottom:1px solid var(--border); background:var(--bg3); }
+td { padding:10px 16px; font-size:13px; border-bottom:1px solid var(--border); }
+tr:hover td { background:rgba(99,102,241,0.05); }
+.status-badge { padding:2px 8px; border-radius:10px; font-size:11px; font-weight:500; }
+.status-done { background:rgba(34,197,94,0.15); color:var(--success); }
+.status-running { background:rgba(99,102,241,0.15); color:var(--primary); }
+.status-pending { background:rgba(245,158,11,0.15); color:var(--warn); }
+.status-failed { background:rgba(239,68,68,0.15); color:var(--danger); }
+
+/* ── 记忆面板 ── */
+.memory-panel { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); margin-top:16px; }
+.memory-panel .panel-header { padding:12px 16px; border-bottom:1px solid var(--border); font-size:13px; font-weight:600; display:flex; align-items:center; gap:8px; }
+.memory-panel .panel-body { padding:16px; }
+.fact-list { display:flex; flex-wrap:wrap; gap:8px; }
+.fact-tag { background:var(--bg3); border:1px solid var(--border); border-radius:var(--radius); padding:4px 10px; font-size:12px; }
+.fact-tag .fk { color:var(--primary); font-weight:600; margin-right:4px; }
+.summary-text { font-size:13px; line-height:1.7; color:var(--text2); white-space:pre-wrap; }
+
+/* ── 知识页 ── */
+.knowledge-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:16px; }
+.knowledge-card { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
+.knowledge-card h4 { font-size:13px; margin-bottom:8px; }
+.knowledge-card p { font-size:12px; color:var(--text2); line-height:1.5; }
+.knowledge-card .tag { display:inline-block; background:var(--bg3); padding:2px 6px; border-radius:4px; font-size:10px; color:var(--text2); margin-top:6px; }
+
+/* ── 空状态 ── */
+.empty { padding:48px; text-align:center; color:var(--text2); font-size:13px; }
+
+/* ── 滚动条 ── */
+::-webkit-scrollbar { width:6px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background:var(--text2); }
+
+/* ── 加载动画 ── */
+.spinner { width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--primary); border-radius:50%; animation:spin .6s linear infinite; display:inline-block; }
+@keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- ── 侧边栏 ── -->
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <h1>蜂群控制台</h1>
+    <div class="ver">Swarm Agent v0.1.0</div>
+  </div>
+  <nav class="nav">
+    <div class="nav-item active" data-page="chat">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      对话
+    </div>
+    <div class="nav-item" data-page="dashboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      仪表盘
+    </div>
+    <div class="nav-item" data-page="tasks">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+      任务 <span class="nav-badge" id="task-badge" style="display:none">0</span>
+    </div>
+    <div class="nav-item" data-page="sessions">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+      会话
+    </div>
+    <div class="nav-item" data-page="knowledge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+      知识库
+    </div>
+    <div class="nav-item" data-page="skills">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      技能
+    </div>
+  </nav>
+  <div class="sidebar-footer">
+    <span class="status-dot" id="health-dot"></span>
+    <span id="health-text">连接中...</span>
+  </div>
+</aside>
+
+<!-- ── 主内容区 ── -->
+<div class="main">
+
+  <!-- ── 对话页 ── -->
+  <div class="page active" id="page-chat">
+    <div class="chat-layout">
+      <div class="chat-sidebar">
+        <div class="chat-sidebar-header">
+          <button class="btn btn-primary" onclick="newSession()">+ 新对话</button>
+        </div>
+        <div class="session-list" id="chat-session-list"></div>
+      </div>
+      <div class="chat-main">
+        <div class="topbar">
+          <h2 id="chat-title">新对话</h2>
+          <div class="actions">
+            <button class="btn btn-sm" onclick="viewSessionMemory()">查看记忆</button>
+          </div>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+          <div class="empty">开始一段新对话...</div>
+        </div>
+        <div class="chat-input-area">
+          <textarea id="chat-input" placeholder="输入消息... (Enter 发送，Shift+Enter 换行)" rows="1"></textarea>
+          <button class="btn btn-primary" id="send-btn" onclick="sendMessage()">发送</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 仪表盘页 ── -->
+  <div class="page" id="page-dashboard">
+    <div class="topbar"><h2>系统仪表盘</h2><div class="actions"><button class="btn btn-sm" onclick="refreshDashboard()">刷新</button></div></div>
+    <div class="dashboard" id="dashboard-content">
+      <div class="stat-grid" id="stat-grid"></div>
+      <div class="section-title">任务状态分布</div>
+      <div class="stat-grid" id="status-grid"></div>
+      <div class="section-title" style="margin-top:24px">最近任务</div>
+      <div class="table-wrap" id="recent-tasks-table"></div>
+    </div>
+  </div>
+
+  <!-- ── 任务页 ── -->
+  <div class="page" id="page-tasks">
+    <div class="topbar"><h2>任务管理</h2><div class="actions"><button class="btn btn-sm" onclick="refreshTasks()">刷新</button></div></div>
+    <div style="flex:1;overflow-y:auto;padding:20px;">
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <select id="task-status-filter" onchange="refreshTasks()">
+            <option value="">全部状态</option>
+            <option value="pending">等待中</option>
+            <option value="running">运行中</option>
+            <option value="done">已完成</option>
+            <option value="failed">失败</option>
+            <option value="decomposed">已拆分</option>
+          </select>
+          <input id="task-session-filter" placeholder="Session ID..." oninput="refreshTasks()">
+        </div>
+        <div id="tasks-table-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 会话页 ── -->
+  <div class="page" id="page-sessions">
+    <div class="topbar"><h2>会话管理</h2><div class="actions"><button class="btn btn-sm" onclick="refreshSessions()">刷新</button></div></div>
+    <div style="flex:1;overflow-y:auto;padding:20px;" id="sessions-content"></div>
+  </div>
+
+  <!-- ── 知识库页 ── -->
+  <div class="page" id="page-knowledge">
+    <div class="topbar"><h2>集体知识</h2><div class="actions"><button class="btn btn-sm" onclick="refreshKnowledge()">刷新</button></div></div>
+    <div style="flex:1;overflow-y:auto;padding:20px;" id="knowledge-content"></div>
+  </div>
+
+  <!-- ── 技能页 ── -->
+  <div class="page" id="page-skills">
+    <div class="topbar"><h2>已注册技能</h2><div class="actions"><button class="btn btn-sm" onclick="refreshSkills()">刷新</button></div></div>
+    <div style="flex:1;overflow-y:auto;padding:20px;" id="skills-content"></div>
+  </div>
+
+</div>
+
+<!-- ── 弹窗（记忆详情） ── -->
+<div id="modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;display:none;align-items:center;justify-content:center;">
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;width:640px;max-height:80vh;overflow-y:auto;padding:24px;">
+    <div style="display:flex;justify-content:space-between;margin-bottom:16px;">
+      <h3 style="font-size:15px;" id="modal-title">会话记忆</h3>
+      <button class="btn btn-sm" onclick="closeModal()">关闭</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+// ── 全局状态 ──
+const API = '';  // 同源，无需前缀
+let currentSession = null;
+let sessions = {};  // { sessionId: { messages: [{role,content,taskId}], turns:0 } }
+
+// ── 导航 ──
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    item.classList.add('active');
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-' + item.dataset.page).classList.add('active');
+    // 切换时自动刷新
+    const page = item.dataset.page;
+    if (page === 'dashboard') refreshDashboard();
+    else if (page === 'tasks') refreshTasks();
+    else if (page === 'sessions') refreshSessions();
+    else if (page === 'knowledge') refreshKnowledge();
+    else if (page === 'skills') refreshSkills();
+  });
+});
+
+// ── 健康检查 ──
+async function checkHealth() {
+  try {
+    const r = await fetch(API + '/health');
+    const d = await r.json();
+    document.getElementById('health-dot').style.background = 'var(--success)';
+    document.getElementById('health-text').textContent = `${d.agents} Agent 在线`;
+  } catch {
+    document.getElementById('health-dot').style.background = 'var(--danger)';
+    document.getElementById('health-text').textContent = '连接失败';
+  }
+}
+checkHealth();
+setInterval(checkHealth, 15000);
+
+// ── 工具函数 ──
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function statusBadge(s) {
+  const cls = { done:'status-done', running:'status-running', pending:'status-pending', failed:'status-failed', decomposed:'status-pending' };
+  const label = { done:'完成', running:'运行中', pending:'等待', failed:'失败', decomposed:'已拆分', pending_review:'待审', rejected:'驳回' };
+  return `<span class="status-badge ${cls[s]||''}">${label[s]||s}</span>`;
+}
+function timeAgo(iso) {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return '刚刚';
+  if (diff < 3600) return Math.floor(diff/60) + '分钟前';
+  if (diff < 86400) return Math.floor(diff/3600) + '小时前';
+  return Math.floor(diff/86400) + '天前';
+}
+
+// ══════════════════════════════════════════════
+// ── 对话模块 ──
+// ══════════════════════════════════════════════
+
+function newSession() {
+  const sid = crypto.randomUUID().slice(0, 8);
+  sessions[sid] = { messages: [], turns: 0 };
+  currentSession = sid;
+  renderSessionList();
+  renderChat();
+}
+
+function switchSession(sid) {
+  currentSession = sid;
+  renderSessionList();
+  renderChat();
+}
+
+function renderSessionList() {
+  const el = document.getElementById('chat-session-list');
+  const ids = Object.keys(sessions).reverse();
+  if (!ids.length) { el.innerHTML = '<div class="empty">暂无会话</div>'; return; }
+  el.innerHTML = ids.map(sid =>
+    `<div class="session-item ${sid===currentSession?'active':''}" onclick="switchSession('${sid}')">
+      <div class="sid">${sid}</div>
+      <div class="meta">${sessions[sid].turns} 轮对话</div>
+    </div>`
+  ).join('');
+}
+
+function renderChat() {
+  const titleEl = document.getElementById('chat-title');
+  const msgEl = document.getElementById('chat-messages');
+  if (!currentSession || !sessions[currentSession]) {
+    titleEl.textContent = '新对话';
+    msgEl.innerHTML = '<div class="empty">开始一段新对话...</div>';
+    return;
+  }
+  titleEl.textContent = `会话 ${currentSession}`;
+  const msgs = sessions[currentSession].messages;
+  if (!msgs.length) { msgEl.innerHTML = '<div class="empty">开始一段新对话...</div>'; return; }
+  msgEl.innerHTML = msgs.map(m =>
+    `<div class="msg ${m.role}">
+      ${esc(m.content)}
+      ${m.taskId ? `<div class="msg-meta">task: ${m.taskId}</div>` : ''}
+    </div>`
+  ).join('');
+  msgEl.scrollTop = msgEl.scrollHeight;
+}
+
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  if (!currentSession) newSession();
+  const sess = sessions[currentSession];
+  sess.messages.push({ role: 'user', content: text });
+  input.value = '';
+  renderChat();
+
+  // 显示加载
+  const msgEl = document.getElementById('chat-messages');
+  msgEl.innerHTML += '<div class="typing-indicator" id="typing"><span class="spinner"></span> 蜂群处理中...</div>';
+  msgEl.scrollTop = msgEl.scrollHeight;
+  document.getElementById('send-btn').disabled = true;
+
+  try {
+    const r = await fetch(API + '/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, session_id: currentSession }),
+    });
+    const d = await r.json();
+    sess.messages.push({ role: 'bot', content: d.reply, taskId: d.task_id });
+    sess.turns++;
+  } catch (e) {
+    sess.messages.push({ role: 'bot', content: '请求失败: ' + e.message });
+  }
+  document.getElementById('send-btn').disabled = false;
+  renderChat();
+  renderSessionList();
+}
+
+// 快捷键
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+// 查看记忆
+async function viewSessionMemory() {
+  if (!currentSession) return;
+  try {
+    const r = await fetch(API + `/board/sessions/${currentSession}/memory`);
+    const d = await r.json();
+    let html = '';
+    // 事实
+    html += '<div class="memory-panel"><div class="panel-header">核心事实 (' + d.fact_count + ')</div><div class="panel-body">';
+    if (d.facts.length) {
+      html += '<div class="fact-list">' + d.facts.map(f =>
+        `<div class="fact-tag"><span class="fk">${esc(f.key)}:</span> ${esc(f.value)}</div>`
+      ).join('') + '</div>';
+    } else { html += '<div style="color:var(--text2);font-size:12px;">暂无事实</div>'; }
+    html += '</div></div>';
+    // 摘要
+    html += '<div class="memory-panel" style="margin-top:12px"><div class="panel-header">滚动摘要 (覆盖到第' + d.summary.up_to_turn + '轮)</div><div class="panel-body">';
+    html += d.summary.text ? `<div class="summary-text">${esc(d.summary.text)}</div>` : '<div style="color:var(--text2);font-size:12px;">暂无摘要</div>';
+    html += '</div></div>';
+    showModal('会话记忆: ' + currentSession, html);
+  } catch (e) { showModal('错误', '<div class="empty">加载失败: ' + esc(e.message) + '</div>'); }
+}
+
+// ══════════════════════════════════════════════
+// ── 仪表盘 ──
+// ══════════════════════════════════════════════
+
+async function refreshDashboard() {
+  try {
+    const [healthR, boardR, tasksR] = await Promise.all([
+      fetch(API + '/health'), fetch(API + '/board'), fetch(API + '/board/tasks'),
+    ]);
+    const health = await healthR.json();
+    const board = await boardR.json();
+    const tasks = await tasksR.json();
+
+    const s = board.summary;
+    document.getElementById('stat-grid').innerHTML = `
+      <div class="stat-card highlight"><div class="label">Agent 数量</div><div class="value">${health.agents}</div><div class="sub">在线</div></div>
+      <div class="stat-card highlight"><div class="label">总任务数</div><div class="value">${s.total_tasks}</div></div>
+      <div class="stat-card"><div class="label">活跃会话</div><div class="value">${s.active_sessions}</div></div>
+      <div class="stat-card"><div class="label">技能</div><div class="value">${s.total_skills}</div></div>
+      <div class="stat-card"><div class="label">拆分模式</div><div class="value">${s.total_patterns}</div></div>
+      <div class="stat-card"><div class="label">经验教训</div><div class="value">${s.total_lessons}</div></div>
+    `;
+
+    const sc = s.status_counts || {};
+    document.getElementById('status-grid').innerHTML = Object.entries(sc).map(([k,v]) =>
+      `<div class="stat-card"><div class="label">${statusBadge(k)}</div><div class="value">${v}</div></div>`
+    ).join('') || '<div class="empty">暂无数据</div>';
+
+    // 最近任务
+    const recent = (tasks.tasks || []).slice(0, 10);
+    if (recent.length) {
+      document.getElementById('recent-tasks-table').innerHTML = `<table>
+        <thead><tr><th>ID</th><th>任务</th><th>状态</th><th>会话</th><th>时间</th></tr></thead>
+        <tbody>${recent.map(t => `<tr>
+          <td><code>${t.task_id}</code></td>
+          <td>${esc((t.action||'').slice(0,60))}</td>
+          <td>${statusBadge(t.status)}</td>
+          <td>${t.session_id||'-'}</td>
+          <td>${timeAgo(t.created_at)}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+    } else {
+      document.getElementById('recent-tasks-table').innerHTML = '<div class="empty">暂无任务</div>';
+    }
+
+    // 更新 badge
+    const pending = sc.pending || 0;
+    const badge = document.getElementById('task-badge');
+    if (pending > 0) { badge.style.display = ''; badge.textContent = pending; }
+    else { badge.style.display = 'none'; }
+  } catch (e) {
+    document.getElementById('stat-grid').innerHTML = '<div class="empty">加载失败: ' + esc(e.message) + '</div>';
+  }
+}
+
+// ══════════════════════════════════════════════
+// ── 任务页 ──
+// ══════════════════════════════════════════════
+
+async function refreshTasks() {
+  const status = document.getElementById('task-status-filter').value;
+  const sessionId = document.getElementById('task-session-filter').value.trim();
+  let url = API + '/board/tasks?';
+  if (status) url += 'status=' + status + '&';
+  if (sessionId) url += 'session_id=' + sessionId;
+  try {
+    const r = await fetch(url);
+    const d = await r.json();
+    const tasks = d.tasks || [];
+    if (!tasks.length) {
+      document.getElementById('tasks-table-body').innerHTML = '<div class="empty">无匹配任务</div>';
+      return;
+    }
+    document.getElementById('tasks-table-body').innerHTML = `<table>
+      <thead><tr><th>ID</th><th>任务内容</th><th>状态</th><th>类型</th><th>会话</th><th>轮次</th><th>Agent</th><th>创建时间</th><th>操作</th></tr></thead>
+      <tbody>${tasks.map(t => `<tr>
+        <td><code>${t.task_id}</code></td>
+        <td title="${esc(t.action)}">${esc((t.action||'').slice(0,50))}</td>
+        <td>${statusBadge(t.status)}</td>
+        <td>${t.task_type||'normal'}</td>
+        <td>${t.session_id||'-'}</td>
+        <td>${t.turn_index||'-'}</td>
+        <td>${t.claimed_by||'-'}</td>
+        <td>${timeAgo(t.created_at)}</td>
+        <td><button class="btn btn-sm" onclick="viewTaskDetail('${t.task_id}')">详情</button></td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  } catch (e) {
+    document.getElementById('tasks-table-body').innerHTML = '<div class="empty">加载失败</div>';
+  }
+}
+
+async function viewTaskDetail(taskId) {
+  try {
+    const r = await fetch(API + `/board/task/${taskId}`);
+    const d = await r.json();
+    let html = '<div style="font-size:13px;line-height:1.7;">';
+    html += `<p><b>ID:</b> ${d.task.task_id}</p>`;
+    html += `<p><b>状态:</b> ${statusBadge(d.task.status)}</p>`;
+    html += `<p><b>任务:</b> ${esc(d.task.action)}</p>`;
+    if (d.task.output_text) html += `<p><b>输出:</b></p><pre style="background:var(--bg3);padding:12px;border-radius:6px;white-space:pre-wrap;font-size:12px;max-height:300px;overflow-y:auto;">${esc(d.task.output_text)}</pre>`;
+    if (d.children.length) {
+      html += `<p style="margin-top:12px;"><b>子任务 (${d.children.length}):</b></p>`;
+      html += d.children.map(c => `<div style="padding:6px 0;border-bottom:1px solid var(--border);">${statusBadge(c.status)} <code>${c.task_id}</code> ${esc((c.action||'').slice(0,60))}</div>`).join('');
+    }
+    if (d.traces.length) {
+      html += `<p style="margin-top:12px;"><b>推理 Trace (${d.traces.length}):</b></p>`;
+      html += `<div style="max-height:200px;overflow-y:auto;">` + d.traces.map(tr =>
+        `<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:11px;">
+          <span style="color:var(--primary);">[${tr.layer}]</span> ${tr.action} <span style="color:var(--text2);">${tr.duration_ms?tr.duration_ms.toFixed(0)+'ms':''}</span>
+        </div>`
+      ).join('') + '</div>';
+    }
+    html += '</div>';
+    showModal('任务详情: ' + taskId, html);
+  } catch (e) { showModal('错误', '<div class="empty">加载失败</div>'); }
+}
+
+// ══════════════════════════════════════════════
+// ── 会话页 ──
+// ══════════════════════════════════════════════
+
+async function refreshSessions() {
+  try {
+    const r = await fetch(API + '/board');
+    const d = await r.json();
+    // 使用 all_session_ids（包含 DB 中的历史会话）
+    const sids = d.all_session_ids || Object.keys(d.sessions || {});
+    if (!sids.length) {
+      document.getElementById('sessions-content').innerHTML = '<div class="empty">暂无会话</div>';
+      return;
+    }
+    let html = '<div class="table-wrap"><table><thead><tr><th>Session ID</th><th>状态</th><th>操作</th></tr></thead><tbody>';
+    sids.forEach(sid => {
+      const inMemory = (d.sessions || {})[sid];
+      const turnsInfo = inMemory ? (Array.isArray(inMemory) ? inMemory.length + ' 轮' : inMemory + ' 轮') : '历史会话';
+      html += `<tr>
+        <td><code>${sid}</code></td>
+        <td>${turnsInfo}</td>
+        <td>
+          <button class="btn btn-sm" onclick="viewSessionDetail('${sid}')">对话历史</button>
+          <button class="btn btn-sm" onclick="viewSessionMemoryPage('${sid}')">记忆</button>
+        </td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    document.getElementById('sessions-content').innerHTML = html;
+  } catch (e) {
+    document.getElementById('sessions-content').innerHTML = '<div class="empty">加载失败</div>';
+  }
+}
+
+async function viewSessionDetail(sid) {
+  try {
+    const r = await fetch(API + `/board/sessions/${sid}`);
+    const d = await r.json();
+    let html = `<p style="margin-bottom:12px;color:var(--text2);font-size:12px;">共 ${d.total_turns} 轮, ${d.total_tasks} 个任务</p>`;
+    (d.turns || []).forEach(t => {
+      html += `<div style="padding:10px 0;border-bottom:1px solid var(--border);">
+        <div style="font-size:12px;color:var(--text2);">第${t.turn_index}轮 ${statusBadge(t.status)} <code>${t.task_id}</code></div>
+        <div style="margin-top:4px;font-size:13px;"><b>问:</b> ${esc((t.action||'').slice(0,100))}</div>
+        ${t.output_text ? `<div style="margin-top:4px;font-size:12px;color:var(--text2);"><b>答:</b> ${esc(t.output_text.slice(0,200))}${t.output_text.length>200?'...':''}</div>` : ''}
+      </div>`;
+    });
+    showModal('会话历史: ' + sid, html);
+  } catch (e) { showModal('错误', '<div class="empty">加载失败</div>'); }
+}
+
+async function viewSessionMemoryPage(sid) {
+  try {
+    const r = await fetch(API + `/board/sessions/${sid}/memory`);
+    const d = await r.json();
+    let html = '';
+    html += '<div class="memory-panel"><div class="panel-header">核心事实 (' + d.fact_count + ')</div><div class="panel-body">';
+    if (d.facts.length) {
+      html += '<div class="fact-list">' + d.facts.map(f =>
+        `<div class="fact-tag"><span class="fk">${esc(f.key)}:</span> ${esc(f.value)}</div>`
+      ).join('') + '</div>';
+    } else { html += '<div style="color:var(--text2);font-size:12px;">暂无</div>'; }
+    html += '</div></div>';
+    html += '<div class="memory-panel" style="margin-top:12px"><div class="panel-header">滚动摘要 (覆盖第1-' + d.summary.up_to_turn + '轮, 共' + d.summary.total_turns + '轮)</div><div class="panel-body">';
+    html += d.summary.text ? `<div class="summary-text">${esc(d.summary.text)}</div>` : '<div style="color:var(--text2);font-size:12px;">暂无</div>';
+    html += '</div></div>';
+    showModal('会话记忆: ' + sid, html);
+  } catch (e) { showModal('错误', '<div class="empty">加载失败</div>'); }
+}
+
+// ══════════════════════════════════════════════
+// ── 知识库页 ──
+// ══════════════════════════════════════════════
+
+async function refreshKnowledge() {
+  try {
+    const r = await fetch(API + '/board/knowledge');
+    const d = await r.json();
+    let html = '';
+    // 技能
+    html += '<div class="section-title">技能 (' + (d.skills||[]).length + ')</div>';
+    if ((d.skills||[]).length) {
+      html += '<div class="knowledge-grid">' + d.skills.map(s =>
+        `<div class="knowledge-card"><h4>${esc(s.name||s.skill_id)}</h4><p>${esc(s.description||s.trigger||'')}</p><div class="tag">置信度: ${s.confidence} | 成功: ${s.success_count} | 失败: ${s.fail_count}</div></div>`
+      ).join('') + '</div>';
+    } else { html += '<div class="empty">暂无技能</div>'; }
+    // 模式
+    html += '<div class="section-title" style="margin-top:24px">拆分模式 (' + (d.patterns||[]).length + ')</div>';
+    if ((d.patterns||[]).length) {
+      html += '<div class="knowledge-grid">' + d.patterns.map(p =>
+        `<div class="knowledge-card"><h4>${esc(p.trigger)}</h4><p>模板: ${esc(JSON.stringify(p.template).slice(0,120))}</p><div class="tag">使用 ${p.used_count} 次 | 成功率 ${(p.success_rate*100).toFixed(0)}%</div></div>`
+      ).join('') + '</div>';
+    } else { html += '<div class="empty">暂无模式</div>'; }
+    // 经验
+    html += '<div class="section-title" style="margin-top:24px">经验教训 (' + (d.lessons||[]).length + ')</div>';
+    if ((d.lessons||[]).length) {
+      html += '<div class="knowledge-grid">' + d.lessons.map(l =>
+        `<div class="knowledge-card"><h4>${esc(l.context)}</h4><p>${esc(l.lesson)}</p><div class="tag">置信度: ${l.confidence}</div></div>`
+      ).join('') + '</div>';
+    } else { html += '<div class="empty">暂无经验</div>'; }
+    document.getElementById('knowledge-content').innerHTML = html;
+  } catch (e) {
+    document.getElementById('knowledge-content').innerHTML = '<div class="empty">加载失败</div>';
+  }
+}
+
+// ══════════════════════════════════════════════
+// ── 技能页 ──
+// ══════════════════════════════════════════════
+
+async function refreshSkills() {
+  try {
+    const r = await fetch(API + '/skills');
+    const d = await r.json();
+    let html = `<div class="stat-grid" style="margin-bottom:20px;">
+      <div class="stat-card highlight"><div class="label">技能数</div><div class="value">${d.count}</div></div>
+      <div class="stat-card highlight"><div class="label">工具数</div><div class="value">${d.tools_count}</div></div>
+    </div>`;
+    if ((d.skills||[]).length) {
+      html += '<div class="knowledge-grid">' + d.skills.map(s =>
+        `<div class="knowledge-card"><h4>${esc(s.name)}</h4><p>工具: ${(s.tools||[]).map(t => esc(t)).join(', ') || '-'}</p></div>`
+      ).join('') + '</div>';
+    } else { html += '<div class="empty">暂无技能</div>'; }
+    document.getElementById('skills-content').innerHTML = html;
+  } catch (e) {
+    document.getElementById('skills-content').innerHTML = '<div class="empty">加载失败</div>';
+  }
+}
+
+// ══════════════════════════════════════════════
+// ── 弹窗 ──
+// ══════════════════════════════════════════════
+
+function showModal(title, bodyHtml) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = bodyHtml;
+  const overlay = document.getElementById('modal-overlay');
+  overlay.style.display = 'flex';
+}
+function closeModal() {
+  document.getElementById('modal-overlay').style.display = 'none';
+}
+document.getElementById('modal-overlay').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+// ── 初始化：从 API 恢复历史会话 + 渲染 ──
+async function restoreSessionsFromAPI() {
+  try {
+    const r = await fetch(API + '/board');
+    const d = await r.json();
+    const sids = d.all_session_ids || Object.keys(d.sessions || {});
+    for (const sid of sids) {
+      if (!sessions[sid]) {
+        // 从 API 加载该会话的对话历史
+        try {
+          const sr = await fetch(API + `/board/sessions/${sid}`);
+          const sd = await sr.json();
+          if (sd.turns && sd.turns.length) {
+            const msgs = [];
+            sd.turns.forEach(t => {
+              msgs.push({ role: 'user', content: t.action });
+              if (t.output_text) msgs.push({ role: 'bot', content: t.output_text, taskId: t.task_id });
+            });
+            sessions[sid] = { messages: msgs, turns: sd.total_turns };
+          }
+        } catch (e) { /* 忽略单个会话加载失败 */ }
+      }
+    }
+  } catch (e) { /* 忽略，服务可能未就绪 */ }
+  renderSessionList();
+}
+restoreSessionsFromAPI();
+</script>
+</body>
+</html>

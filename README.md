@@ -95,6 +95,18 @@ Swarm Agent is a **self-organizing multi-agent system** built on the blackboard 
 - Persisted to disk, shared across all agents
 - The swarm gets smarter over time
 
+**Three-Layer Memory & Persistence**
+- Core Memory: KV facts auto-extracted per session
+- Summary Memory: incremental rolling summary (sliding window)
+- Working Memory: recent turn context window
+- Multi-backend: SQLite (default) / MySQL / PostgreSQL — switch via `.env`
+- SQLAlchemy Engine with built-in connection pooling (`QueuePool` + `pool_pre_ping`)
+
+**Web Dashboard**
+- Built-in single-page frontend (no build step)
+- Real-time task monitoring, session history, knowledge browser
+- Served at `http://localhost:8000/` alongside API
+
 **MCP Protocol Native**
 - JSON config → auto-connect to any MCP server
 - Tools auto-discovered and registered at startup
@@ -124,8 +136,13 @@ Swarm Agent is a **self-organizing multi-agent system** built on the blackboard 
 git clone https://github.com/manman-zjp/swarm-Agent.git
 cd swarm-Agent
 
-poetry install            # Core dependencies
+poetry install            # Core dependencies (includes SQLAlchemy)
 poetry install -E mcp     # + MCP support (recommended)
+
+# Optional database backends (default SQLite needs no extra deps)
+poetry install -E mysql   # + MySQL support (pymysql)
+poetry install -E pgsql   # + PostgreSQL support (psycopg2)
+poetry install -E all-db  # + All database backends
 ```
 
 ### Configuration
@@ -242,6 +259,30 @@ See [MCP Servers Registry](https://github.com/modelcontextprotocol/servers) for 
 
 </details>
 
+<details>
+<summary><b>Storage & Connection Pool</b></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `SESSION_DB_URL` | `sqlite:///swarm/data/sessions.db` | Database URL (sqlite / mysql / postgresql) |
+| `SESSION_FACT_MAX_PER_SESSION` | `50` | Max KV facts per session |
+| `SESSION_POOL_SIZE` | `5` | Connection pool size (MySQL/PgSQL only) |
+| `SESSION_POOL_MAX_OVERFLOW` | `10` | Max overflow connections (MySQL/PgSQL only) |
+| `SESSION_POOL_RECYCLE` | `3600` | Connection recycle interval in seconds |
+
+</details>
+
+<details>
+<summary><b>Summary & Context Window</b></summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `TASK_SUMMARY_WINDOW_SIZE` | `3` | Turns per summary batch |
+| `TASK_SUMMARY_MAX_CHARS` | `800` | Max summary length |
+| `TASK_SUMMARY_TURN_DETAIL_CHARS` | `500` | Max chars per turn in summary input |
+
+</details>
+
 <br>
 
 ## Extending Skills
@@ -314,7 +355,8 @@ swarm-agent/
 │   ├── prompts.py               # System prompt templates
 │   ├── core/
 │   │   ├── blackboard.py        # Blackboard: tasks + knowledge + indexing
-│   │   ├── models.py            # Data models (Task, Skill, Pattern, Lesson)
+│   │   ├── models.py            # Data models (Task, Skill, Pattern, Lesson, SessionMemory)
+│   │   ├── storage.py           # Persistence: SQLAlchemy Engine + multi-backend
 │   │   └── observer.py          # Observer: async buffered trace logger
 │   ├── skills/
 │   │   ├── base.py              # Skill abstract base class
@@ -324,8 +366,14 @@ swarm-agent/
 │   │       └── task_ops.py      # Built-in: Task decomposition
 │   ├── mcp/
 │   │   └── client.py            # MCP client: external server connector
+│   ├── static/
+│   │   └── index.html           # Built-in web dashboard (single-page)
 │   └── data/
 │       └── mcp_servers.json     # MCP server configuration
+├── tests/                       # Unit tests (pytest)
+│   ├── test_config.py
+│   ├── test_models.py
+│   └── test_storage.py
 ├── docs/
 │   └── architecture.md          # Architecture design document
 ├── .env.example                 # Environment template (all parameters)
@@ -413,18 +461,22 @@ All parameters are centralized in `swarm/config.py` and driven by environment va
 | Web Framework | FastAPI + Uvicorn |
 | LLM Client | OpenAI Python SDK |
 | Tool Protocol | MCP (Model Context Protocol) |
-| Storage | In-memory + JSON file persistence |
+| Persistence | SQLAlchemy 2.0 (SQLite / MySQL / PostgreSQL) |
+| Connection Pool | SQLAlchemy QueuePool (pool_pre_ping + auto-recycle) |
+| Frontend | Built-in SPA (vanilla JS, no build step) |
 
 <br>
 
 ## Roadmap
 
+- [x] ~~Web UI dashboard~~ — Built-in SPA with session history & knowledge browser
+- [x] ~~Multi-backend persistence~~ — SQLite / MySQL / PostgreSQL via SQLAlchemy
+- [x] ~~Three-layer memory~~ — KV facts + rolling summary + context window
+- [x] ~~Connection pooling~~ — SQLAlchemy QueuePool with pre-ping & auto-recycle
+- [x] ~~Automatic skill extraction & evolution~~ — Collective knowledge system
 - [ ] Redis backend for production-grade blackboard
 - [ ] Dynamic agent scaling
-- [ ] Web UI dashboard
-- [ ] Pre-configured MCP server templates
 - [ ] Docker sandbox for code execution
-- [ ] Automatic skill extraction & evolution
 - [ ] Vector-based knowledge retrieval
 - [ ] Streaming response support
 

@@ -3,7 +3,8 @@
 __version__ = "0.1.0"
 
 from swarm.core.blackboard import Blackboard
-from swarm.core.models import Task, TaskStatus, Lesson, Skill, Pattern
+from swarm.core.models import Task, TaskStatus, Lesson, Skill, Pattern, SessionMemory, SessionFact
+from swarm.core.storage import SessionStore, SQLiteSessionStore, create_store
 from swarm.agent import SwarmAgent
 from swarm.llm import LLMClient
 from swarm.skills.base import BaseSkill
@@ -17,6 +18,11 @@ __all__ = [
     "Lesson",
     "Skill",
     "Pattern",
+    "SessionMemory",
+    "SessionFact",
+    "SessionStore",
+    "SQLiteSessionStore",
+    "create_store",
     "SwarmAgent",
     "LLMClient",
     "BaseSkill",
