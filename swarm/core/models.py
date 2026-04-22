@@ -60,14 +60,26 @@ class Task:
     lessons_extracted: list[dict] = field(default_factory=list)
     # 拆分来源
     decompose_source: str | None = None  # skill / pattern / scratch
+    # ── 交叉评审字段 ──
+    draft_output: str | None = None       # 初稿（提交评审前的执行结果）
+    reviewer_id: str | None = None        # 评审者 agent_id
+    review_comments: str | None = None    # 评审意见
+    review_round: int = 0                 # 当前评审轮次
 
     def is_claimable(self) -> bool:
-        """是否可被领取。"""
+        """是否可被领取（新任务）。"""
         if self.status != TaskStatus.PENDING:
             return False
         if self.claimed_by and self.claim_expires and datetime.now() < self.claim_expires:
             return False
         return True
+
+    def is_reviewable(self, exclude_agent: str) -> bool:
+        """是否可被评审（排除执行者自己）。"""
+        return (
+            self.status == TaskStatus.PENDING_REVIEW
+            and self.claimed_by != exclude_agent
+        )
 
     def claim(self, agent_id: str, ttl_seconds: int | None = None) -> bool:
         """尝试领取（非线程安全，需外部加锁）。"""
@@ -166,3 +178,12 @@ class ReflectionResult:
     fix_plan: str = ""
     lessons: list[dict] = field(default_factory=list)
     skill_candidate: dict | None = None
+
+
+@dataclass
+class ReviewResult:
+    """交叉评审的输出。"""
+    approved: bool = True
+    comments: str = ""          # 评审意见
+    fix_suggestions: str = ""   # 具体修改建议（不通过时）
+    quality_score: int = 0       # 质量评分 1-5

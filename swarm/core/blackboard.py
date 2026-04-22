@@ -185,7 +185,7 @@ class Blackboard:
         output_text: str,
         lessons: list[dict] | None = None,
     ) -> None:
-        """提交任务结果。"""
+        """提交任务最终结果（评审通过或跳过评审时调用）。"""
         async with self._lock:
             task.status = TaskStatus.DONE
             task.output_text = output_text
@@ -225,6 +225,118 @@ class Blackboard:
                 await self._check_parent_completion(task.parent_id)
             # 检查是否有等待这个任务完成的 Future
             self._resolve_future(task.task_id)
+
+    async def submit_draft(
+        self, task: Task, draft_text: str,
+    ) -> None:
+        """提交初稿到黑板，状态变为 PENDING_REVIEW，等待其他 Agent 评审。"""
+        async with self._lock:
+            task.status = TaskStatus.PENDING_REVIEW
+            task.draft_output = draft_text
+            task.updated_at = datetime.now()
+            self._task_available.set()  # 通知有新的可评审任务
+            self._log_event(task, "draft_submitted", {
+                "agent_id": task.claimed_by,
+                "draft_len": len(draft_text),
+            })
+            logger.info(
+                f"[黑板] 初稿提交: {task.task_id} | "
+                f"by {task.claimed_by} | {len(draft_text)}字"
+            )
+
+    async def claim_review(self, agent_id: str) -> Task | None:
+        """尝试领取一个待评审任务（排除自己执行的任务）。"""
+        async with self._lock:
+            candidates = [
+                t for t in self._tasks.values()
+                if t.is_reviewable(exclude_agent=agent_id)
+            ]
+            if not candidates:
+                return None
+            # 优先评审等待时间最长的
+            candidates.sort(key=lambda t: t.updated_at)
+            task = candidates[0]
+            task.reviewer_id = agent_id
+            task.updated_at = datetime.now()
+            self._log_event(task, "review_claimed", {"reviewer": agent_id})
+            logger.info(f"[黑板] {agent_id} 领取评审: {task.task_id}")
+            return task
+
+    async def approve_review(
+        self, task: Task, comments: str = "",
+        lessons: list[dict] | None = None,
+    ) -> None:
+        """评审通过：将初稿转为最终结果。"""
+        async with self._lock:
+            task.status = TaskStatus.DONE
+            task.output_text = task.draft_output
+            task.review_comments = comments
+            task.lessons_extracted = lessons or []
+            task.updated_at = datetime.now()
+
+            for les in (lessons or []):
+                self._lessons.append(Lesson(
+                    context=les.get("context", ""),
+                    lesson=les.get("lesson", ""),
+                    source_task=task.task_id,
+                ))
+            if lessons:
+                self._save_lessons()
+
+            self._log_event(task, "review_approved", {
+                "reviewer": task.reviewer_id,
+                "round": task.review_round,
+            })
+            logger.info(
+                f"[黑板] 评审通过: {task.task_id} | "
+                f"reviewer={task.reviewer_id} | round={task.review_round}"
+            )
+
+            # 持久化
+            if task.parent_id is None and task.session_id and self._store:
+                try:
+                    self._store.save_turn(
+                        session_id=task.session_id,
+                        turn_index=task.turn_index,
+                        action=task.action,
+                        output_text=task.output_text or "",
+                        status=task.status.value,
+                        task_id=task.task_id,
+                    )
+                    self._persisted_session_ids.add(task.session_id)
+                except Exception as e:
+                    logger.error(f"[黑板] 持久化对话轮次失败: {e}")
+
+            if task.parent_id:
+                await self._check_parent_completion(task.parent_id)
+            self._resolve_future(task.task_id)
+
+    async def reject_review(
+        self, task: Task, comments: str, fix_suggestions: str,
+    ) -> None:
+        """评审不通过：打回重做，状态变为 PENDING 让原执行者重新领取。"""
+        async with self._lock:
+            task.status = TaskStatus.PENDING
+            task.review_comments = comments
+            task.review_round += 1
+            task.updated_at = datetime.now()
+            # 把评审意见附加到 action，让重新执行时能看到
+            task.action = (
+                f"{task.action}\n\n"
+                f"## 第{task.review_round}轮评审意见（需改进）\n"
+                f"{comments}\n"
+                f"## 修改建议\n{fix_suggestions}"
+            )
+            self._task_available.set()
+            self._log_event(task, "review_rejected", {
+                "reviewer": task.reviewer_id,
+                "round": task.review_round,
+                "comments": comments[:200],
+            })
+            logger.info(
+                f"[黑板] 评审驳回: {task.task_id} | "
+                f"round={task.review_round} | {comments[:80]}"
+            )
 
     async def mark_failed(self, task: Task, reason: str = "") -> None:
         """标记任务失败。"""

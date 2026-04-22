@@ -109,6 +109,21 @@ class CodeExecConfig:
 
 
 @dataclass(frozen=True)
+class ReviewConfig:
+    """交叉评审配置。"""
+    # 是否启用交叉评审（关闭后退回“提交即终”模式）
+    enabled: bool = field(default_factory=lambda: _env_str("REVIEW_ENABLED", "true").lower() == "true")
+    # 评审时 LLM 的 temperature（低于执行层，更严格）
+    temperature: float = field(default_factory=lambda: _env_float("REVIEW_TEMPERATURE", 0.1))
+    # 最大评审轮次（超过则强制通过）
+    max_rounds: int = field(default_factory=lambda: _env_int("REVIEW_MAX_ROUNDS", 2))
+    # 传给评审者的结果截断长度
+    result_max_chars: int = field(default_factory=lambda: _env_int("REVIEW_RESULT_MAX_CHARS", 3000))
+    # 简单任务跳过评审的工具调用阈值（工具调用次数 < 此值且无工具调用时跳过）
+    skip_if_no_tools: bool = field(default_factory=lambda: _env_str("REVIEW_SKIP_IF_NO_TOOLS", "true").lower() == "true")
+
+
+@dataclass(frozen=True)
 class SkillHotLoaderConfig:
     """技能热插拔配置。"""
     # 是否启用技能热插拔
@@ -132,6 +147,7 @@ class SwarmConfig:
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     observer: ObserverConfig = field(default_factory=ObserverConfig)
     code_exec: CodeExecConfig = field(default_factory=CodeExecConfig)
+    review: ReviewConfig = field(default_factory=ReviewConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     skill_hotloader: SkillHotLoaderConfig = field(default_factory=SkillHotLoaderConfig)
 

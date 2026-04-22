@@ -54,7 +54,7 @@ class LLMClient:
             return content, usage
         except Exception as e:
             logger.error(f"LLM 调用失败: {e}")
-            return f"[LLM 错误] {e}", {}
+            return "抱歉，服务暂时不可用，请稍后重试。", {}
 
     async def chat_with_tools(
         self,
@@ -63,7 +63,7 @@ class LLMClient:
         tool_executor: Any,
         max_rounds: int | None = None,
     ) -> tuple[str, list[dict], dict]:
-        """带工具调用的 ReAct 循环（动态工具列表）。
+        """带工具调用的 ReAct 循环。
 
         Args:
             messages: 对话消息列表
@@ -88,10 +88,11 @@ class LLMClient:
                 }
                 if tools:
                     kwargs["tools"] = tools
+                    kwargs["tool_choice"] = "auto"  # 明确告知模型可以选择不调用工具
                 response = await self.client.chat.completions.create(**kwargs)
             except Exception as e:
                 logger.error(f"LLM 工具调用失败: {e}")
-                return f"[LLM 错误] {e}", tool_records, total_usage
+                return f"[服务异常] 请稍后重试。", tool_records, total_usage
 
             if response.usage:
                 total_usage["prompt"] += response.usage.prompt_tokens
@@ -133,19 +134,23 @@ class LLMClient:
 
                 logger.info(f"[ReAct] 调用工具: {func_name}")
                 result = await tool_executor(func_name, func_args)
+                result_str = str(result)
 
                 tool_records.append({
                     "round": round_idx + 1,
                     "tool": func_name,
                     "args_preview": str(func_args)[:200],
-                    "result_preview": str(result)[:200],
+                    "result_preview": result_str[:500],
                 })
 
-                # 工具结果加入历史
+                # 工具结果加入历史（截断过长结果，防止撤爆上下文）
+                max_result_len = 4000
+                if len(result_str) > max_result_len:
+                    result_str = result_str[:max_result_len] + f"\n...（结果已截断，共{len(str(result))}字符）"
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": str(result),
+                    "content": result_str,
                 })
 
         # 超过最大轮次
