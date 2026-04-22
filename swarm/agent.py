@@ -20,13 +20,14 @@ import uuid
 from typing import Any
 
 from swarm.core.blackboard import Blackboard
-from swarm.core.models import Task, TaskStatus, ReflectionResult, SessionFact
+from swarm.core.models import Task, TaskStatus, ReflectionResult, ReviewResult, SessionFact
 from swarm.core.observer import observer
 from swarm.llm import LLMClient
 from swarm.skills.registry import SkillRegistry
 from swarm.prompts import (
-    SYSTEM_PROMPT_TEMPLATE, USER_PROMPT_TEMPLATE,
+    SYSTEM_PROMPT_TEMPLATE, build_user_prompt,
     REFLECTION_SYSTEM, REFLECTION_USER_TEMPLATE,
+    REVIEW_SYSTEM, REVIEW_USER_TEMPLATE,
     SUMMARY_SYSTEM, SUMMARY_USER_TEMPLATE,
     FACT_EXTRACT_SYSTEM, FACT_EXTRACT_USER_TEMPLATE,
 )
@@ -52,10 +53,21 @@ class SwarmAgent:
         self._running = False
 
     async def run_forever(self) -> None:
-        """Agent 主循环：领取 → 处理 → 提交，循环往复。"""
+        """主循环：优先评审 → 领取新任务 → 处理，循环往复。"""
         self._running = True
         logger.info(f"[{self.agent_id}] 加入蜂群")
         while self._running:
+            # ── 优先检查是否有待评审任务 ──
+            if config.review.enabled:
+                review_task = await self.blackboard.claim_review(self.agent_id)
+                if review_task is not None:
+                    try:
+                        await self.do_review(review_task)
+                    except Exception as e:
+                        logger.error(f"[{self.agent_id}] 评审异常: {e}", exc_info=True)
+                    continue
+
+            # ── 领取新任务 ──
             task = await self.blackboard.claim_pending(self.agent_id)
             if task is None:
                 await self.blackboard.wait_for_task(timeout=config.agent.task_wait_timeout)
@@ -132,29 +144,130 @@ class SwarmAgent:
                     input_data=reflection.fix_plan[:200], output_data=result[:300],
                     duration_ms=(time.time() - t0) * 1000, session_id=task.session_id,
                 )
-            await self.blackboard.submit_result(
+
+            # ── 4. 决定提交方式：交叉评审 or 直接完成 ──
+            await self._submit_or_draft(
                 task, result,
                 reflection.lessons if reflection.passed else [],
+                has_tool_calls=True,
             )
         else:
-            # 纯文本回答或无工具调用 → 直接提交
+            # 纯文本回答或无工具调用
             observer.trace(
                 trace_id=trace_id, task_id=task.task_id, agent_id=self.agent_id,
                 layer="reflection", step_seq=3, action="skip_reflection",
                 input_data="no_exec_tools", output_data={"reason": "无执行类工具调用，跳过反思"},
                 duration_ms=0, session_id=task.session_id,
             )
-            await self.blackboard.submit_result(task, result, [])
+            await self._submit_or_draft(task, result, [], has_tool_calls=False)
 
-        # ── 4. 任务完成后，异步触发增量摘要 + 事实提取 ──
-        if task.session_id and task.parent_id is None:
+        # ── 4. 任务完成后，异步触发增量摘要 + 事实提取（仅直接完成时） ──
+        if task.status == TaskStatus.DONE and task.session_id and task.parent_id is None:
             asyncio.create_task(self._maybe_summarize(task))
             asyncio.create_task(self._maybe_extract_facts(task, result))
 
         total_ms = (time.time() - task_start) * 1000
         logger.info(
-            f"[{self.agent_id}] 任务完成: {task.task_id} | "
-            f"{total_ms:.0f}ms | tools={len(tool_records)}"
+            f"[{self.agent_id}] 任务处理完成: {task.task_id} | "
+            f"status={task.status.value} | {total_ms:.0f}ms | tools={len(tool_records)}"
+        )
+
+    # ── 提交策略 ──────────────────────────────────────
+
+    async def _submit_or_draft(
+        self, task: Task, result: str,
+        lessons: list[dict], has_tool_calls: bool,
+    ) -> None:
+        """决定提交方式：有工具调用且评审启用 → 提交初稿；否则 → 直接完成。"""
+        skip_review = (
+            not config.review.enabled
+            or (not has_tool_calls and config.review.skip_if_no_tools)
+            or task.review_round >= config.review.max_rounds
+        )
+        if skip_review:
+            await self.blackboard.submit_result(task, result, lessons)
+        else:
+            await self.blackboard.submit_draft(task, result)
+            logger.info(
+                f"[{self.agent_id}] 提交初稿等待评审: {task.task_id} | "
+                f"round={task.review_round}"
+            )
+
+    # ── 交叉评审 ──────────────────────────────────────
+
+    async def do_review(self, task: Task) -> None:
+        """评审另一个 Agent 的初稿。"""
+        trace_id = str(uuid.uuid4())[:8]
+        t0 = time.time()
+        logger.info(
+            f"[{self.agent_id}] 开始评审: {task.task_id} | "
+            f"执行者={task.claimed_by} | round={task.review_round}"
+        )
+
+        review = await self._review(task, trace_id)
+        review_ms = (time.time() - t0) * 1000
+
+        observer.trace(
+            trace_id=trace_id, task_id=task.task_id, agent_id=self.agent_id,
+            layer="review", step_seq=1, action="cross_review",
+            input_data=task.action[:200],
+            output_data={
+                "approved": review.approved,
+                "quality_score": review.quality_score,
+                "comments": review.comments[:200],
+            },
+            duration_ms=review_ms, session_id=task.session_id,
+        )
+
+        if review.approved:
+            await self.blackboard.approve_review(task, comments=review.comments)
+            logger.info(
+                f"[{self.agent_id}] 评审通过: {task.task_id} | "
+                f"score={review.quality_score} | {review_ms:.0f}ms"
+            )
+            # 通过后触发摘要和事实提取
+            if task.session_id and task.parent_id is None:
+                asyncio.create_task(self._maybe_summarize(task))
+                asyncio.create_task(self._maybe_extract_facts(task, task.output_text or ""))
+        else:
+            await self.blackboard.reject_review(
+                task,
+                comments=review.comments,
+                fix_suggestions=review.fix_suggestions,
+            )
+            logger.info(
+                f"[{self.agent_id}] 评审驳回: {task.task_id} | "
+                f"score={review.quality_score} | {review.comments[:60]}"
+            )
+
+    async def _review(
+        self, task: Task, trace_id: str,
+    ) -> ReviewResult:
+        """调 LLM 执行交叉评审。"""
+        max_chars = config.review.result_max_chars
+        draft = (task.draft_output or "")[:max_chars]
+        messages = [
+            {"role": "system", "content": REVIEW_SYSTEM},
+            {"role": "user", "content": REVIEW_USER_TEMPLATE.format(
+                action=task.action,
+                draft=draft,
+            )},
+        ]
+        response, usage = await self.llm.chat(
+            messages, temperature=config.review.temperature,
+        )
+        return self._parse_review(response)
+
+    def _parse_review(self, text: str) -> ReviewResult:
+        """解析评审 LLM 输出。"""
+        data = self._extract_json(text)
+        if not data:
+            return ReviewResult(approved=True, comments=text[:200], quality_score=3)
+        return ReviewResult(
+            approved=data.get("approved", True),
+            comments=data.get("comments", ""),
+            fix_suggestions=data.get("fix_suggestions", ""),
+            quality_score=data.get("quality_score", 3),
         )
 
     # ── 执行层 ──────────────────────────────────────
@@ -164,7 +277,7 @@ class SwarmAgent:
     ) -> tuple[str, list[dict], dict]:
         """统一 ReAct 执行：构建动态工具列表 + 调用 LLM。"""
         # 构建知识上下文
-        cautions = "无"
+        cautions = ""
         knowledge = self.blackboard.query_knowledge(task)
         if knowledge["lessons"]:
             cautions = "\n".join(
@@ -174,17 +287,18 @@ class SwarmAgent:
         # 构建会话上下文（滑动窗口 + 增量摘要）
         session_context = self._build_session_context(task)
 
-        # 动态构建系统提示词（包含当前可用技能描述）
+        # 动态构建系统提示词
+        skill_desc = self.skills.get_skill_descriptions()
         system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-            skill_descriptions=self.skills.get_skill_descriptions(),
+            skill_descriptions=skill_desc if skill_desc != "暂无可用技能。" else "当前无可用工具，请直接回答用户问题。",
         )
 
-        # 构建用户提示词
+        # 构建用户提示词——仅注入有效内容
         action = task.action
         if fix_plan:
             action = f"{task.action}\n\n## 修复方案\n{fix_plan}"
 
-        user_prompt = USER_PROMPT_TEMPLATE.format(
+        user_prompt = build_user_prompt(
             action=action,
             session_context=session_context,
             cautions=cautions,
@@ -291,18 +405,10 @@ class SwarmAgent:
 
     def _build_session_context(self, task: Task) -> str:
         """构建会话上下文：核心事实（KV）+ 摘要（窗口外）+ 近期原文（窗口内）。
-    
-        结构：
-        ### 核心事实
-        - tech_stack: FastAPI + PostgreSQL
-        - project_name: 电商平台
-        ### 历史摘要（第1-5轮压缩）
-        用户在做一个电商项目...
-        ### 近期对话
-        [第6轮] xxx → yyy
+        只注入有实质内容的段落，空上下文返回空字符串。
         """
         if not task.session_id:
-            return "无历史"
+            return ""
     
         window_size = config.task.summary_window_size
         all_done = self.blackboard.get_session_full_history(task.session_id)
@@ -314,16 +420,16 @@ class SwarmAgent:
         facts = self.blackboard.get_session_facts(task.session_id)
         if facts:
             fact_lines = [f"- {f.fact_key}: {f.fact_value}" for f in facts]
-            parts.append("### 核心事实\n" + "\n".join(fact_lines))
+            parts.append("★ 核心事实\n" + "\n".join(fact_lines))
     
         if not history:
-            return "\n\n".join(parts) if parts else "无历史"
+            return "\n\n".join(parts) if parts else ""
     
         # 2. 摘要部分（窗口外的压缩历史）
         memory = self.blackboard.get_session_memory(task.session_id)
         if memory and memory.summary:
             parts.append(
-                f"### 历史摘要（第1-{memory.summary_up_to_turn}轮压缩）\n"
+                f"★ 历史摘要（第1-{memory.summary_up_to_turn}轮）\n"
                 f"{memory.summary}"
             )
     
@@ -339,9 +445,9 @@ class SwarmAgent:
                     f"[第{h.turn_index}轮] 用户: {action_preview}\n"
                     f"回复: {output_preview}"
                 )
-            parts.append("### 近期对话\n" + "\n\n".join(recent_lines))
+            parts.append("★ 近期对话\n" + "\n\n".join(recent_lines))
     
-        return "\n\n".join(parts) if parts else "无历史"
+        return "\n\n".join(parts) if parts else ""
 
     async def _maybe_summarize(self, task: Task) -> None:
         """任务完成后检查是否需要触发增量摘要压缩。
